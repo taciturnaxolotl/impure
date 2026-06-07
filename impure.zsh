@@ -29,14 +29,17 @@
 # https://github.com/sindresorhus/pretty-time-zsh
 prompt_impure_human_time_to_var() {
 	local total_seconds=$1 var=$2
-	local formatted
-	if (( total_seconds < 60 )); then
-		formatted=$(printf '%.3fs' "$total_seconds")
-	else
-		local minutes=$(( total_seconds / 60 ))
-		local seconds=$(( total_seconds % 60 ))
-		formatted="${minutes}m ${seconds}s"
-	fi
+	local days=$(( total_seconds / 60 / 60 / 24 ))
+	local hours=$(( total_seconds / 60 / 60 % 24 ))
+	local minutes=$(( total_seconds / 60 % 60 ))
+	local seconds=$(( total_seconds % 60 ))
+
+	local formatted=
+	(( days > 0 )) && formatted+="${days}d "
+	(( hours > 0 )) && formatted+="${hours}h "
+	(( minutes > 0 )) && formatted+="${minutes}m "
+	formatted+="${seconds}s"
+
 	typeset -g "${var}"="${formatted}"
 }
 
@@ -126,11 +129,6 @@ prompt_impure_set_colors() {
 prompt_impure_set_path_separator() {
 	local path_color=$prompt_impure_colors[path]
 
-	# Ephemeral shell: use red path to signal non-persistent environment.
-	if [[ -n ${ATELIER_EPHEMERAL:-} ]]; then
-		path_color=$prompt_impure_colors[path:ephemeral]
-	fi
-
 	typeset -g prompt_impure_path_segment="%F{${path_color}}%~%f"
 
 	if zstyle -t ':prompt:impure:path:separator' dim; then
@@ -156,9 +154,6 @@ prompt_impure_render_dimmed_path() {
 	fi
 
 	local path_color=$prompt_impure_colors[path]
-	if [[ -n ${ATELIER_EPHEMERAL:-} ]]; then
-		path_color=$prompt_impure_colors[path:ephemeral]
-	fi
 
 	print -n -r -- "%F{${path_color}}${prefix}${current_path//\//$separator}%f"
 }
@@ -236,7 +231,7 @@ prompt_impure_preprompt_render() {
 		"${psvar[17]}"
 		"${psvar[18]}"
 		"${psvar[19]}"
-		# psvar[21] (exec time) excluded: changes every command, handled by precmd.
+		# psvar[20] (exec time) excluded: changes every command, handled by precmd.
 		"${psvar[21]}"
 		"${psvar[22]}"
 		"${psvar[23]}"
@@ -503,18 +498,25 @@ prompt_impure_async_git_stash() {
 	command git rev-list --walk-reflogs --count refs/stash
 }
 
+# Walk up from $PWD looking for a .jj directory. Returns 0 if inside a
+# Jujutsu repo, 1 otherwise. Shared by the sync dispatch path and the
+# async worker so the detection logic lives in exactly one place.
+prompt_impure_in_jj_repo() {
+	local dir=$PWD
+	while [[ $dir != "/" ]]; do
+		[[ -d "$dir/.jj" ]] && return 0
+		dir=${dir:h}
+	done
+	[[ -d "/.jj" ]]
+}
+
 # Async jujutsu status: get change ID and working set modifications.
 # Mirrors the git async pattern — runs in the background worker, never blocks.
 prompt_impure_async_jj_status() {
 	setopt localoptions noshwordsplit
 
-	# Check if we're in a jj repo by looking for .jj directory.
-	local jj_dir=$PWD
-	while [[ $jj_dir != "/" ]]; do
-		[[ -d "$jj_dir/.jj" ]] && break
-		jj_dir=${jj_dir:h}
-	done
-	[[ -d "$jj_dir/.jj" ]] || return 1
+	# Skip unless inside a jj repo.
+	prompt_impure_in_jj_repo || return 1
 
 	# Get bookmark and change ID in one call.
 	local jj_info
@@ -621,15 +623,21 @@ prompt_impure_async_init() {
 prompt_impure_async_tasks() {
 	setopt localoptions noshwordsplit
 
-	# If inside a jj repo, skip git entirely (jj takes precedence).
-	local check_dir=$PWD
-	while [[ $check_dir != "/" ]]; do
-		if [[ -d "$check_dir/.jj" ]]; then
-			prompt_impure_clear_git_state
-			return
+	# If inside a jj repo, skip git entirely (jj takes precedence). Cache the
+	# result per directory so we only walk the path on an actual `cd`, keeping
+	# the synchronous precmd path off the filesystem in the common case.
+	if [[ $PWD != ${prompt_impure_jj_repo_check_pwd:-} ]]; then
+		typeset -g prompt_impure_jj_repo_check_pwd=$PWD
+		if prompt_impure_in_jj_repo; then
+			typeset -g prompt_impure_jj_repo_check=1
+		else
+			typeset -g prompt_impure_jj_repo_check=0
 		fi
-		check_dir=${check_dir:h}
-	done
+	fi
+	if (( ${prompt_impure_jj_repo_check:-0} )); then
+		prompt_impure_clear_git_state
+		return
+	fi
 
 	# Check if git integration is enabled (default: yes).
 	if ! zstyle -T ":prompt:impure:git" show; then
@@ -1264,8 +1272,7 @@ prompt_impure_setup() {
 		host                 242
 		jj                   242
 		nix-shell            red
-			path                 blue
-		path:ephemeral       red
+		path                 blue
 		prompt:error         red
 		prompt:success       magenta
 		prompt:ssh           cyan
@@ -1307,9 +1314,11 @@ prompt_impure_setup() {
 	typeset -g prompt_impure_jj_changeid=
 	typeset -g prompt_impure_jj_working=
 	typeset -g prompt_impure_jj_pwd=
+	typeset -g prompt_impure_jj_repo_check_pwd=
+	typeset -g prompt_impure_jj_repo_check=0
 
 	# Construct PROMPT once, both preprompt and prompt line. Kept
-	# dynamic via variables and psvar[12-25], updated each render
+	# dynamic via variables and psvar[12-27], updated each render
 	# in prompt_impure_preprompt_render. Numbering starts at 12 for
 	# legacy reasons (Pure originally used psvar[12] for virtualenv)
 	# and to avoid collisions with low psvar indices which users
@@ -1318,11 +1327,12 @@ prompt_impure_setup() {
 	#   psvar[12] = suspended jobs symbol (e.g. ✦)
 	#   psvar[13] = username flag, renders user/host (e.g. user@host)
 	#   psvar[14] = git branch
-	#   psvar[15] = git dirty marker, nested inside [14] conditional
-	#   psvar[16] = git action (e.g. rebase, merge)
-	#   psvar[17] = git arrows (e.g. ⇣⇡)
-	#   psvar[18] = git stash symbol (e.g. ≡)
-	#   psvar[19] = exec time (e.g. 1d 3h 2m 5s) — shown in RPROMPT
+	#   psvar[15] = git staging summary (e.g. "+2 ~1"), shown in (parens)
+	#   psvar[16] = git working tree dirty marker ("*")
+	#   psvar[17] = git action (e.g. rebase, merge)
+	#   psvar[18] = git arrows (e.g. ⇣⇡), with leading space
+	#   psvar[19] = git stash symbol (e.g. ≡)
+	#   psvar[20] = exec time (e.g. 1d 3h 2m 5s) — shown in RPROMPT
 	#   psvar[21] = virtualenv/nix-shell name — shown in RPROMPT
 	#   psvar[22] = custom prefix (set by prompt_impure_precustom)
 	#   psvar[23] = custom suffix (set by prompt_impure_precustom)
@@ -1332,8 +1342,8 @@ prompt_impure_setup() {
 	#   psvar[27] = Jujutsu working set changes
 	#
 	# Example output:
-	#   hostname [zmx] ~/Code/impure main* rebase ⇣⇡ ≡ ⬢22 3s suffix
-	#   @abc1234 modified ❯
+	#   hostname [zmx] ~/Code/impure main (+2 ~1)* rebase ⇣⇡ ≡ suffix
+	#   42s pure ❯
 	#
 	# Preprompt line: each %(NV..) section only renders when its psvar is non-empty.
 	PROMPT='${prompt_newline}'

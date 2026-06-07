@@ -4,9 +4,9 @@ set -euo pipefail
 
 cd -- "${0:A:h}/.."
 
-source ./pure.zsh >/dev/null 2>&1
+source ./impure.zsh >/dev/null 2>&1
 
-prompt_pure_preprompt_render() {
+prompt_impure_preprompt_render() {
 	:
 }
 

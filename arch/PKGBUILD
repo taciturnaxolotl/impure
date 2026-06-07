@@ -1,26 +1,28 @@
-# Author: Sindre Sorhus
-# Maintainer: Pat Brisbin <pbrisbin@gmail.com>
-# Contributor: Emil Falk <emph@emph.se>
-pkgname=zsh-pure-prompt-git
-pkgver=r61.7d3b317
+# Maintainer: Kieran Klukas <me@dunkirk.sh>
+# Upstream: Sindre Sorhus (Pure)
+pkgname=zsh-impure-prompt-git
+pkgver=r1.0000000
 pkgrel=1
-pkgdesc='A minimal and pure prompt for zsh.'
+pkgdesc='A pretty, minimal and fast zsh prompt with Jujutsu, nix-shell, and zmx awareness.'
 arch=('any')
-url='https://github.com/sindresorhus/pure'
+url='https://github.com/taciturnaxolotl/impure'
 license=('MIT')
 depends=('zsh' 'git')
-source=("$pkgname::git://github.com/sindresorhus/pure.git")
+optdepends=('jujutsu: jj repository status in the prompt')
+source=("$pkgname::git+https://github.com/taciturnaxolotl/impure.git")
 sha256sums=('SKIP')
 
 pkgver() {
-  cd $srcdir/$pkgname
+  cd "$srcdir/$pkgname"
   printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
 }
 
 package() {
-  cd $srcdir/$pkgname
-  install -Dm644 pure.zsh \
-    "$pkgdir/usr/share/zsh/functions/Prompts/prompt_pure_setup"
+  cd "$srcdir/$pkgname"
+  install -Dm644 impure.zsh \
+    "$pkgdir/usr/share/zsh/functions/Prompts/prompt_impure_setup"
   install -Dm644 async.zsh \
     "$pkgdir/usr/share/zsh/functions/async"
+  install -Dm644 LICENSE.md \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE.md"
 }

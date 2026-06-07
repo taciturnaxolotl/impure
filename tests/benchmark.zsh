@@ -1,5 +1,5 @@
 #!/usr/bin/env zsh
-# Benchmark Pure's synchronous hot path.
+# Benchmark Impure's synchronous hot path.
 # Usage: zsh tests/benchmark.zsh [--dimmed]
 
 setopt noshwordsplit
@@ -9,7 +9,7 @@ cd -- "${0:A:h}/.."
 
 # Stub async machinery so we only measure synchronous code.
 # Note: with async_worker_eval stubbed, the worker-sync caching in
-# prompt_pure_async_tasks always measures the cache-hit path after
+# prompt_impure_async_tasks always measures the cache-hit path after
 # the first iteration.
 async() { : }
 async_init() { : }
@@ -24,27 +24,27 @@ async_job() { : }
 local dimmed=0
 if [[ $1 == '--dimmed' ]]; then
 	dimmed=1
-	zstyle ':prompt:pure:path:separator' dim yes
+	zstyle ':prompt:impure:path:separator' dim yes
 fi
 
 # Disable title setting to avoid escape sequences in output.
-zstyle ':prompt:pure:title' show no
+zstyle ':prompt:impure:title' show no
 
-# Source Pure (suppresses output from setup).
-source ./pure.zsh >/dev/null 2>&1
+# Source Impure (suppresses output from setup).
+source ./impure.zsh >/dev/null 2>&1
 
 # Simulate a populated prompt state (as if inside a git repo with all features).
-typeset -gA prompt_pure_vcs_info=(
+typeset -gA prompt_impure_vcs_info=(
 	branch 'main'
 	top "$PWD"
 	action ''
 	pwd "$PWD"
 )
-typeset -g prompt_pure_git_dirty='*'
-typeset -g prompt_pure_git_arrows='⇣⇡'
-typeset -g prompt_pure_git_stash='1'
-typeset -g prompt_pure_cmd_exec_time='42s'
-typeset -g prompt_pure_cmd_timestamp=$EPOCHSECONDS
+typeset -g prompt_impure_git_dirty='*'
+typeset -g prompt_impure_git_arrows='⇣⇡'
+typeset -g prompt_impure_git_stash='1'
+typeset -g prompt_impure_cmd_exec_time='42s'
+typeset -g prompt_impure_cmd_timestamp=$EPOCHSECONDS
 
 _bench() {
 	local name=$1 iters=$2
@@ -84,7 +84,7 @@ _bench() {
 
 local iters=200
 
-print "Pure prompt benchmark (${iters} iterations)"
+print "Impure prompt benchmark (${iters} iterations)"
 if (( dimmed )); then
 	print "  Mode: dimmed path separator ENABLED"
 else
@@ -92,23 +92,23 @@ else
 fi
 print
 
-_bench "prompt_pure_set_colors" $iters \
-	'prompt_pure_set_colors'
+_bench "prompt_impure_set_colors" $iters \
+	'prompt_impure_set_colors'
 
-_bench "prompt_pure_set_path_separator" $iters \
-	'prompt_pure_set_path_separator'
+_bench "prompt_impure_set_path_separator" $iters \
+	'prompt_impure_set_path_separator'
 
-_bench "prompt_pure_preprompt_render (precmd)" $iters \
-	'prompt_pure_preprompt_render precmd'
+_bench "prompt_impure_preprompt_render (precmd)" $iters \
+	'prompt_impure_preprompt_render precmd'
 
 _bench "\${(S%%)PROMPT} expansion" $iters \
 	'local x="${(S%%)PROMPT}"'
 
-_bench "prompt_pure_async_tasks (sync part)" $iters \
-	'prompt_pure_async_tasks'
+_bench "prompt_impure_async_tasks (sync part)" $iters \
+	'prompt_impure_async_tasks'
 
-_bench "prompt_pure_precmd (full)" $iters \
-	'prompt_pure_precmd'
+_bench "prompt_impure_precmd (full)" $iters \
+	'prompt_impure_precmd'
 
 print
 print "Done."

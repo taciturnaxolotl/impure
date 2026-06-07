@@ -57,7 +57,6 @@ test_colors_initialized() {
     assert_not_empty "prompt:error color set" "$prompt_impure_colors[prompt:error]"
     assert_not_empty "prompt:ssh color set" "$prompt_impure_colors[prompt:ssh]"
     assert_not_empty "path color set" "$prompt_impure_colors[path]"
-    assert_not_empty "path:ephemeral color set" "$prompt_impure_colors[path:ephemeral]"
     assert_not_empty "jj color set" "$prompt_impure_colors[jj]"
     assert_not_empty "zmx color set" "$prompt_impure_colors[zmx]"
     assert_not_empty "nix-shell color set" "$prompt_impure_colors[nix-shell]"
@@ -174,28 +173,6 @@ test_zmx_segment() {
     assert_empty "ZMX psvar cleared" "${psvar[24]}"
 }
 
-test_ephemeral_path() {
-    print "\n--- Ephemeral path ---"
-    ATELIER_EPHEMERAL=1
-    prompt_impure_set_path_separator
-    if [[ "$prompt_impure_path_segment" == *"${prompt_impure_colors[path:ephemeral]}"* ]]; then
-        print -P "%F{green}✓%f ephemeral uses red path color"
-        (( PASS++ ))
-    else
-        print -P "%F{red}✗%f ephemeral not using red path color"
-        (( FAIL++ ))
-    fi
-    unset ATELIER_EPHEMERAL
-    prompt_impure_set_path_separator
-    if [[ "$prompt_impure_path_segment" == *"${prompt_impure_colors[path]}"* ]]; then
-        print -P "%F{green}✓%f normal uses blue path color"
-        (( PASS++ ))
-    else
-        print -P "%F{red}✗%f normal not using blue path color"
-        (( FAIL++ ))
-    fi
-}
-
 test_jj_async_function() {
     print "\n--- Jujutsu async ---"
     # The async function should exist
@@ -235,7 +212,6 @@ run_test() {
         fingerprint) test_fingerprint_stable ;;
         transient)   test_transient_flag ;;
         zmx)         test_zmx_segment ;;
-        ephemeral)   test_ephemeral_path ;;
         jj)          test_jj_async_function ;;
         ssh)         test_ssh_prompt_color ;;
         all)
@@ -245,13 +221,12 @@ run_test() {
             test_fingerprint_stable
             test_transient_flag
             test_zmx_segment
-            test_ephemeral_path
             test_jj_async_function
             test_ssh_prompt_color
             ;;
         *)
             print "Unknown test: $1"
-            print "Available: colors structure rprompt fingerprint transient zmx ephemeral jj ssh all"
+            print "Available: colors structure rprompt fingerprint transient zmx jj ssh all"
             exit 1
             ;;
     esac

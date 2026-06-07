@@ -2,9 +2,9 @@
 
 ### General information
 
-#### System report (output of `prompt_pure_system_report`):
+#### System report (output of `prompt_impure_system_report`):
 
-<!-- TIP: Run `prompt_pure_system_report | pbcopy` on macOS to copy straight to clipboard, then paste here -->
+<!-- TIP: Run `prompt_impure_system_report | pbcopy` on macOS to copy straight to clipboard, then paste here -->
 
 #### Other information
 

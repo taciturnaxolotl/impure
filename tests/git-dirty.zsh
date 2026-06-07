@@ -1,5 +1,12 @@
 #!/usr/bin/env zsh
 
+# Tests for prompt_impure_async_git_dirty.
+#
+# The function outputs an oh-my-posh style summary "STAGING|WORKING" where
+# STAGING is like "+2 ~1 -1" (added/modified/deleted in the index) and
+# WORKING is "*" when the working tree is dirty or empty when it is clean.
+# Return code is 0 for a clean repo, 1 for a dirty one.
+
 setopt clobber
 set -euo pipefail
 
@@ -25,156 +32,77 @@ setup_repo() {
 	command git commit -q -m "initial"
 }
 
+# Run the dirty check. $1 is the untracked_dirty flag (1 = count untracked).
 check_dirty() {
 	local dirty_output dirty_code
-	dirty_output=$(prompt_pure_async_git_dirty "$@") && dirty_code=0 || dirty_code=$?
+	dirty_output=$(prompt_impure_async_git_dirty "$@") && dirty_code=0 || dirty_code=$?
 	typeset -g check_output=$dirty_output check_code=$dirty_code
 }
 
 setup_repo
 
-# ── Default mode (no detailed flag) ──
-
-# Clean repo.
+# Clean repo: return 0, no output.
 check_dirty 1
 assert_equal 0 $check_code "clean repo should return 0"
 assert_empty "$check_output" "clean repo should have no output"
 
-# Unstaged changes.
+# Unstaged modification only: working dirty, no staging.
 echo "modified" > file.txt
 check_dirty 1
-assert_equal 1 $check_code "dirty repo should return 1"
-assert_empty "$check_output" "default mode should have no output"
+assert_equal 1 $check_code "unstaged change should return 1"
+assert_equal "|*" "$check_output" "unstaged change should show empty staging + working marker"
 
-# Staged changes.
+# Staged modification only: staging "~1", clean working tree.
 command git add file.txt
 check_dirty 1
-assert_equal 1 $check_code "staged dirty should return 1"
-assert_empty "$check_output" "default mode staged should have no output"
+assert_equal 1 $check_code "staged change should return 1"
+assert_equal "~1|" "$check_output" "staged modification should show ~1 with no working marker"
 
-# Untracked files.
-command git commit -q -m "second"
-echo "untracked" > newfile.txt
+# Staged + unstaged on the same file: staging "~1", working dirty.
+echo "more" > file.txt
 check_dirty 1
-assert_equal 1 $check_code "untracked dirty should return 1"
-assert_empty "$check_output" "default mode untracked should have no output"
+assert_equal 1 $check_code "staged+unstaged should return 1"
+assert_equal "~1|*" "$check_output" "staged+unstaged should show ~1 and working marker"
+command git checkout -q -- file.txt
+command git reset -q HEAD -- file.txt 2>/dev/null || true
+command git checkout -q -- file.txt
 
-# PURE_GIT_UNTRACKED_DIRTY=0 ignores untracked.
+# Staged addition: staging "+1".
+echo "added" > added.txt
+command git add added.txt
+check_dirty 1
+assert_equal 1 $check_code "staged addition should return 1"
+assert_equal "+1|" "$check_output" "staged addition should show +1"
+command git commit -q -m "add added.txt"
+
+# Staged deletion: staging "-1".
+command git rm -q added.txt
+check_dirty 1
+assert_equal 1 $check_code "staged deletion should return 1"
+assert_equal "-1|" "$check_output" "staged deletion should show -1"
+command git commit -q -m "remove added.txt"
+
+# Multiple staged kinds: +N ~N together, space separated.
+echo "newone" > newone.txt
+echo "newtwo" > newtwo.txt
+command git add newone.txt newtwo.txt
+echo "touch" > file.txt
+command git add file.txt
+check_dirty 1
+assert_equal 1 $check_code "mixed staging should return 1"
+assert_equal "+2 ~1|" "$check_output" "mixed staging should show +2 ~1"
+command git commit -q -m "mixed"
+
+# Untracked only, counted: working dirty.
+echo "untracked" > untracked.txt
+check_dirty 1
+assert_equal 1 $check_code "untracked should return 1 when counted"
+assert_equal "|*" "$check_output" "untracked should show working marker when counted"
+
+# Untracked only, ignored (untracked_dirty=0): clean.
 check_dirty 0
-assert_equal 0 $check_code "untracked with PURE_GIT_UNTRACKED_DIRTY=0 should be clean"
-assert_empty "$check_output" "untracked with PURE_GIT_UNTRACKED_DIRTY=0 should have no output"
-zf_rm -f newfile.txt
-
-# PURE_GIT_UNTRACKED_DIRTY=0 still detects staged tracked changes.
-echo "staged with ignored untracked" > file.txt
-command git add file.txt
-check_dirty 0
-assert_equal 1 $check_code "staged with PURE_GIT_UNTRACKED_DIRTY=0 should return 1"
-assert_empty "$check_output" "staged with PURE_GIT_UNTRACKED_DIRTY=0 should have no output"
-command git commit -q -m "staged with ignored untracked"
-
-# ── Detailed mode ──
-
-# Clean repo.
-check_dirty 1 1
-assert_equal 0 $check_code "detailed: clean repo should return 0"
-assert_empty "$check_output" "detailed: clean repo should have no output"
-
-# Unstaged changes only.
-echo "detailed-modified" > file.txt
-check_dirty 1 1
-assert_equal 1 $check_code "detailed: unstaged should return 1"
-assert_equal "*" "$check_output" "detailed: unstaged only should show *"
-
-# Staged changes only.
-command git add file.txt
-check_dirty 1 1
-assert_equal 1 $check_code "detailed: staged should return 1"
-assert_equal "+" "$check_output" "detailed: staged only should show +"
-
-# Staged + intent-to-add.
-echo "intent" > intent.txt
-command git add -N intent.txt
-check_dirty 1 1
-assert_equal 1 $check_code "detailed: staged+intent-to-add should return 1"
-assert_equal "*+" "$check_output" "detailed: staged+intent-to-add should show *+"
-command git reset -q HEAD -- intent.txt
-zf_rm -f intent.txt
-
-# Staged + unstaged (same file).
-echo "more changes" > file.txt
-check_dirty 1 1
-assert_equal 1 $check_code "detailed: staged+unstaged should return 1"
-assert_equal "*+" "$check_output" "detailed: staged+unstaged should show *+"
-
-# Untracked only (commit current changes first).
-command git add file.txt
-command git commit -q -m "third"
-echo "new" > newfile.txt
-check_dirty 1 1
-assert_equal 1 $check_code "detailed: untracked should return 1"
-assert_equal "?" "$check_output" "detailed: untracked only should show ?"
-
-# All three: unstaged + staged + untracked.
-echo "modified again" > file.txt
-command git add file.txt
-echo "even more" > file.txt
-check_dirty 1 1
-assert_equal 1 $check_code "detailed: all three should return 1"
-assert_equal "*+?" "$check_output" "detailed: all three should show *+?"
-
-# PURE_GIT_UNTRACKED_DIRTY=0 with only untracked files.
-command git add file.txt
-command git commit -q -m "fourth"
-zf_rm -f newfile.txt
-echo "untracked" > anotherfile.txt
-check_dirty 0 1
-assert_equal 0 $check_code "detailed: untracked with PURE_GIT_UNTRACKED_DIRTY=0 should be clean"
-assert_empty "$check_output" "detailed: untracked with PURE_GIT_UNTRACKED_DIRTY=0 should have no output"
-
-# PURE_GIT_UNTRACKED_DIRTY=0 with unstaged changes only.
-echo "changed" > file.txt
-check_dirty 0 1
-assert_equal 1 $check_code "detailed: unstaged with PURE_GIT_UNTRACKED_DIRTY=0 should return 1"
-assert_equal "*" "$check_output" "detailed: unstaged with PURE_GIT_UNTRACKED_DIRTY=0 should show *"
-
-# PURE_GIT_UNTRACKED_DIRTY=0 with staged changes.
-command git checkout -- file.txt
-echo "staged" > staged.txt
-command git add staged.txt
-check_dirty 0 1
-assert_equal 1 $check_code "detailed: staged with PURE_GIT_UNTRACKED_DIRTY=0 should return 1"
-assert_equal "+" "$check_output" "detailed: staged with PURE_GIT_UNTRACKED_DIRTY=0 should show +"
-
-# Deleted file (unstaged).
-command git commit -q --allow-empty -m "prep"
-command git checkout -- file.txt 2>/dev/null || true
-zf_rm -f anotherfile.txt staged.txt
-command git add -A
-command git commit -q -m "clean slate"
-echo "to delete" > deleteme.txt
-command git add deleteme.txt
-command git commit -q -m "add deleteme"
-zf_rm -f deleteme.txt
-check_dirty 1 1
-assert_equal 1 $check_code "detailed: deleted unstaged should return 1"
-assert_equal "*" "$check_output" "detailed: deleted unstaged should show *"
-
-# Deleted file (staged).
-command git rm -q deleteme.txt
-check_dirty 1 1
-assert_equal 1 $check_code "detailed: deleted staged should return 1"
-assert_equal "+" "$check_output" "detailed: deleted staged should show +"
-
-# Renamed file (staged).
-command git reset -q HEAD -- deleteme.txt
-command git checkout -- deleteme.txt 2>/dev/null || true
-echo "to rename" > renameme.txt
-command git add renameme.txt
-command git commit -q -m "add renameme"
-command git mv renameme.txt renamed.txt
-check_dirty 1 1
-assert_equal 1 $check_code "detailed: renamed staged should return 1"
-assert_equal "+" "$check_output" "detailed: renamed staged should show +"
+assert_equal 0 $check_code "untracked should be clean when ignored"
+assert_empty "$check_output" "untracked should produce no output when ignored"
+zf_rm -f untracked.txt
 
 print "git-dirty tests passed"
