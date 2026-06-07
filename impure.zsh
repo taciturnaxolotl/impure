@@ -188,9 +188,9 @@ prompt_impure_preprompt_render() {
 	# psvar[17]: Git action (rebase/merge).
 	psvar[17]=${prompt_impure_vcs_info[action]}
 
-	# psvar[18]: Git arrows (push/pull) with leading space.
+	# psvar[18]: Git arrows with counts (e.g. ⇡1 ⇣3).
 	psvar[18]=
-	[[ -n $prompt_impure_git_arrows ]] && psvar[18]=" ${prompt_impure_git_arrows}"
+	[[ -n $prompt_impure_git_arrows ]] && psvar[18]=$prompt_impure_git_arrows
 
 	# psvar[19]: Git stash symbol.
 	psvar[19]=
@@ -780,8 +780,9 @@ prompt_impure_check_git_arrows() {
 	setopt localoptions noshwordsplit
 	local arrows left=${1:-0} right=${2:-0}
 
-	(( right > 0 )) && arrows+=${IMPURE_GIT_DOWN_ARROW:-⇣}
-	(( left > 0 )) && arrows+=${IMPURE_GIT_UP_ARROW:-⇡}
+	(( left > 0 )) && arrows+="${IMPURE_GIT_UP_ARROW:-⇡}${left} "
+	(( right > 0 )) && arrows+="${IMPURE_GIT_DOWN_ARROW:-⇣}${right} "
+	arrows=${arrows% }  # trim trailing space
 
 	[[ -n $arrows ]] || return
 	typeset -g REPLY=$arrows
@@ -1195,7 +1196,7 @@ prompt_impure_preview() {
 
 	# Sample prompt with all components visible.
 	# Left side: info segments. Right side (RPROMPT): exec time + nix shell + symbol.
-	print -P "%F{$c[custom:prefix]}prefix%f %F{$c[suspended_jobs]}${IMPURE_SUSPENDED_JOBS_SYMBOL-✦}%f %F{$c[user]}zaphod%f${host_sample} %F{$c[zmx]}[zmx]%f ${path_sample} %F{$c[git:branch]}main%f%F{$c[git:dirty]}*%f %F{$c[git:action]}rebase-i%f %F{$c[git:arrow]}${IMPURE_GIT_DOWN_ARROW:-⇣}${IMPURE_GIT_UP_ARROW:-⇡}%f %F{$c[git:stash]}${IMPURE_GIT_STASH_SYMBOL-≡}%f %F{$c[custom:suffix]}suffix%f"
+	print -P "%F{$c[custom:prefix]}prefix%f %F{$c[suspended_jobs]}${IMPURE_SUSPENDED_JOBS_SYMBOL-✦}%f %F{$c[user]}zaphod%f${host_sample} %F{$c[zmx]}[zmx]%f ${path_sample} %F{$c[git:branch]}main%f%F{$c[git:dirty]}*%f %F{$c[git:action]}rebase-i%f %F{$c[git:arrow]}${IMPURE_GIT_UP_ARROW:-⇡}2 ${IMPURE_GIT_DOWN_ARROW:-⇣}1%f %F{$c[git:stash]}${IMPURE_GIT_STASH_SYMBOL-≡}%f %F{$c[custom:suffix]}suffix%f"
 	print -P "  ← left side above | right side below →"
 	print -P "%F{$c[execution_time]}42s%f %F{$c[nix-shell]}pure%f %F{$c[prompt:success]}${IMPURE_PROMPT_SYMBOL:-❯}%f"
 	print
@@ -1320,7 +1321,7 @@ prompt_impure_setup() {
 	#   psvar[15] = git staging summary (e.g. "+2 ~1"), shown in (parens)
 	#   psvar[16] = git working tree dirty marker ("*")
 	#   psvar[17] = git action (e.g. rebase, merge)
-	#   psvar[18] = git arrows (e.g. ⇣⇡), with leading space
+	#   psvar[18] = git arrows with counts (e.g. ⇡1 ⇣3)
 	#   psvar[19] = git stash symbol (e.g. ≡)
 	#   psvar[20] = exec time (e.g. 1d 3h 2m 5s) — shown in RPROMPT
 	#   psvar[21] = virtualenv/nix-shell name — shown in RPROMPT
