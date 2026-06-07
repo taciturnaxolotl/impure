@@ -610,12 +610,15 @@ prompt_impure_async_init() {
 	if ((${prompt_impure_async_inited:-0})); then
 		return
 	fi
+	prompt_impure_async_inited=1
+	# Initialize zsh-async library (deferred from setup for faster startup).
+	async
 	if ! async_start_worker "prompt_impure" -u -n 2>/dev/null; then
 		# Worker failed to start (e.g. zpty permission denied).
 		# Degrade gracefully by skipping async git operations.
+		prompt_impure_async_inited=0
 		return 1
 	fi
-	prompt_impure_async_inited=1
 	async_register_callback "prompt_impure" prompt_impure_async_callback
 	async_worker_eval "prompt_impure" prompt_impure_async_renice
 }
@@ -1060,30 +1063,17 @@ prompt_impure_state_setup() {
 	if [[ -z $ssh_connection ]] && (( $+commands[who] )); then
 		# When changing user on a remote system, the $SSH_CONNECTION
 		# environment variable can be lost. Attempt detection via `who`.
+		# Only try who -m; skip fallback to plain `who` which is slow on macOS.
 		local who_out
-		who_out=$(who -m 2>/dev/null)
-		if (( $? )); then
-			# Who am I not supported, fallback to plain who.
-			local -a who_in
-			who_in=( ${(f)"$(who 2>/dev/null)"} )
-			who_out="${(M)who_in:#*[[:space:]]${TTY#/dev/}[[:space:]]*}"
-		fi
+		who_out=$(who -m 2>/dev/null) || true
 
-		local reIPv6='(([0-9a-fA-F]+:)|:){2,}[0-9a-fA-F]+'  # Simplified, only checks partial pattern.
-		local reIPv4='([0-9]{1,3}\.){3}[0-9]+'   # Simplified, allows invalid ranges.
-		# Here we assume two non-consecutive periods represents a
-		# hostname. This matches `foo.bar.baz`, but not `foo.bar`.
+		local reIPv6='(([0-9a-fA-F]+:)|:){2,}[0-9a-fA-F]+'
+		local reIPv4='([0-9]{1,3}\.){3}[0-9]+'
 		local reHostname='([.][^. ]+){2}'
 
-		# Usually the remote address is surrounded by parenthesis, but
-		# not on all systems (e.g. busybox).
 		local -H MATCH MBEGIN MEND
-		if [[ $who_out =~ "\(?($reIPv4|$reIPv6|$reHostname)\)?\$" ]]; then
+		if [[ -n $who_out ]] && [[ $who_out =~ "\(?($reIPv4|$reIPv6|$reHostname)\)?\$" ]]; then
 			ssh_connection=$MATCH
-
-			# Export variable to allow detection propagation inside
-			# shells spawned by this one (e.g. tmux does not always
-			# inherit the same tty, which breaks detection).
 			export PROMPT_IMPURE_SSH_CONNECTION=$ssh_connection
 		fi
 		unset MATCH MBEGIN MEND
@@ -1251,7 +1241,7 @@ prompt_impure_setup() {
 
 	autoload -Uz add-zsh-hook
 	autoload -Uz vcs_info
-	autoload -Uz async && async
+	autoload -Uz async
 
 	# The `add-zle-hook-widget` function is not guaranteed to be available.
 	# It was added in Zsh 5.3.
