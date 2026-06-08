@@ -1353,8 +1353,8 @@ prompt_impure_setup() {
 	PROMPT+='%(25V. %F{$prompt_impure_colors[jj]}%25v%f.)'
 	PROMPT+='%(26V. %F{cyan}@%26v%f.)'
 	PROMPT+='%(27V. %F{$prompt_impure_colors[jj]}%27v%f.)'
-	PROMPT+='%(23V. %F{$prompt_impure_colors[custom:prefix]}%23v%f.)'
-	PROMPT+='%(24V. %F{$prompt_impure_colors[custom:suffix]}%24v%f.)'
+	PROMPT+='%(22V. %F{$prompt_impure_colors[custom:prefix]}%22v%f.)'
+	PROMPT+='%(23V. %F{$prompt_impure_colors[custom:suffix]}%23v%f.)'
 
 	# Newline before the prompt symbol.
 	PROMPT+='${prompt_newline}'
