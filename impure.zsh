@@ -1044,11 +1044,7 @@ prompt_impure_transient_redraw() {
 	unset prompt_impure_transient
 
 	local prompt_color
-	if [[ -n ${SSH_CONNECTION:-} ]]; then
-		prompt_color=$prompt_impure_colors[prompt:ssh]
-	else
-		prompt_color=$prompt_impure_colors[prompt:success]
-	fi
+	prompt_color=$prompt_impure_colors[prompt:success]
 
 	# Save full prompt, swap to minimal, redraw.
 	typeset -g prompt_impure_saved_prompt="$PROMPT"
@@ -1270,7 +1266,7 @@ prompt_impure_setup() {
 		path                 blue
 		prompt:error         red
 		prompt:success       magenta
-		prompt:ssh           cyan
+		prompt:ssh           yellow
 		prompt:continuation  242
 		suspended_jobs       red
 		user                 242
@@ -1342,7 +1338,7 @@ prompt_impure_setup() {
 	#
 	# Preprompt line: each %(NV..) section only renders when its psvar is non-empty.
 	PROMPT='${prompt_newline}'
-	PROMPT+='%(13V.%F{$prompt_impure_colors[host]}%m%f .)'
+	PROMPT+='%(13V.%F{$prompt_impure_colors[prompt:ssh]}%m%f .)'
 	PROMPT+='%(24V.%F{$prompt_impure_colors[zmx]}%24v%f .)'
 	prompt_impure_set_path_separator
 	PROMPT+='${${prompt_impure_path_separator_dimmed:+$(prompt_impure_render_dimmed_path)}:-${prompt_impure_path_segment}}'
@@ -1362,11 +1358,11 @@ prompt_impure_setup() {
 
 	# Newline before the prompt symbol.
 	PROMPT+='${prompt_newline}'
-	# Prompt symbol: cyan over SSH, magenta locally, red on error.
-	PROMPT+='%(?.%(13V.%F{$prompt_impure_colors[prompt:ssh]}.%F{$prompt_impure_colors[prompt:success]}).%F{$prompt_impure_colors[prompt:error]})${prompt_impure_state[prompt]}%f '
+	# Prompt symbol: magenta locally, red on error.
+	PROMPT+='%(?.%F{$prompt_impure_colors[prompt:success]}.%F{$prompt_impure_colors[prompt:error]})${prompt_impure_state[prompt]}%f '
 
 	# Indicate continuation prompt by … and use a darker color for it.
-	PROMPT2='%F{$prompt_impure_colors[prompt:continuation]}… %(1_.%_ .%_)%f%(?.%(13V.%F{$prompt_impure_colors[prompt:ssh]}.%F{$prompt_impure_colors[prompt:success]}).%F{$prompt_impure_colors[prompt:error]})${prompt_impure_state[prompt]}%f '
+	PROMPT2='%F{$prompt_impure_colors[prompt:continuation]}… %(1_.%_ .%_)%f%(?.%F{$prompt_impure_colors[prompt:success]}.%F{$prompt_impure_colors[prompt:error]})${prompt_impure_state[prompt]}%f '
 
 	# Build right prompt.
 	prompt_impure_build_rprompt
