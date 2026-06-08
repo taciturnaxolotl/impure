@@ -256,6 +256,12 @@ prompt_impure_preprompt_render() {
 prompt_impure_precmd() {
 	setopt localoptions noshwordsplit
 
+	# Instant prompt cleanup: enrich minimal prompt with full git/jj data.
+	if (( ${IMPURE_INSTANT_PROMPT_ACTIVE:-0} )); then
+		typeset -g IMPURE_INSTANT_PROMPT_ACTIVE=0
+		prompt_impure_reset_prompt
+	fi
+
 	# Check execution time and store it in a variable.
 	prompt_impure_check_cmd_exec_time
 	unset prompt_impure_cmd_timestamp
@@ -755,13 +761,15 @@ prompt_impure_async_refresh() {
 		async_job "prompt_impure" prompt_impure_async_git_aliases || return
 	fi
 
-	async_job "prompt_impure" prompt_impure_async_git_arrows || return
-
 	# Do not perform `git fetch` if it is disabled or in home folder.
 	if (( ${IMPURE_GIT_PULL:-1} )) && [[ $prompt_impure_vcs_info[top] != $HOME ]]; then
 		zstyle -t :prompt:impure:git:fetch only_upstream
 		local only_upstream=$((? == 0))
 		async_job "prompt_impure" prompt_impure_async_git_fetch $only_upstream || return
+	else
+		# Fetch is disabled or skipped; check arrows independently since
+		# prompt_impure_async_git_fetch normally handles arrows after fetching.
+		async_job "prompt_impure" prompt_impure_async_git_arrows || return
 	fi
 
 	# If dirty checking is sufficiently fast,
