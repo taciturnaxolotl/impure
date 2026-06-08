@@ -729,11 +729,15 @@ prompt_impure_async_jj_tasks() {
 	# Ensure async worker is initialized.
 	prompt_impure_async_init || return
 
-	# Clear state and re-dispatch on directory change.
+	# Clear state and sync worker CWD on directory change.
 	if [[ $PWD != ${prompt_impure_jj_pwd:-} ]]; then
 		typeset -g prompt_impure_jj_pwd=$PWD
 		prompt_impure_clear_jj_state
 		async_flush_jobs "prompt_impure"
+		# Sync the async worker's working directory so jj commands run in the
+		# correct repo. Without this, the worker stays in its previous CWD
+		# and prompt_impure_in_jj_repo fails to find .jj.
+		async_worker_eval "prompt_impure" builtin cd -q ${(q)PWD}
 	fi
 
 	# Always dispatch: jj status can change without cd (e.g. jj commit, jj new).
