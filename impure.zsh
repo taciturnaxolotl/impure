@@ -634,6 +634,89 @@ prompt_impure_clear_jj_state() {
 	typeset -g prompt_impure_jj_working=
 }
 
+# Initialize gitstatusd for fast git status queries.
+# Falls back gracefully if gitstatus is not installed.
+prompt_impure_gitstatus_init() {
+	(( ${prompt_impure_gitstatus_inited:-0} )) && return 0
+	typeset -g prompt_impure_gitstatus_inited=0
+
+	# Check if gitstatus plugin is available (sourced externally or via GITSTATUS_DIR).
+	local gitstatus_plugin="${GITSTATUS_PLUGIN_ZSH:-}"
+	if [[ -z "$gitstatus_plugin" ]]; then
+		# Search common locations.
+		local -a candidates=(
+			"${GITSTATUS_DIR:-}/gitstatus.plugin.zsh"
+			"${XDG_DATA_HOME:-$HOME/.local/share}/gitstatus/gitstatus.plugin.zsh"
+			"/usr/share/gitstatus/gitstatus.plugin.zsh"
+		)
+		for gitstatus_plugin in "${candidates[@]}"; do
+			[[ -r "$gitstatus_plugin" ]] && break
+			gitstatus_plugin=
+		done
+	fi
+	[[ -n "$gitstatus_plugin" && -r "$gitstatus_plugin" ]] || return 1
+
+	# Pre-define _gitstatus_plugin_dir so the plugin's typeset line doesn't
+	# break on nix store paths (the :A:h modifier fails in some contexts).
+	typeset -g _gitstatus_plugin_dir="${gitstatus_plugin:h}"
+	# Prevent the plugin from overwriting with a broken value.
+	() {
+		emulate -L zsh
+		setopt no_xtrace
+		source "$gitstatus_plugin" 2>/dev/null
+	} || return 1
+	# Ensure the dir is correct regardless of what the plugin did.
+	typeset -g _gitstatus_plugin_dir="${gitstatus_plugin:h}"
+	gitstatus_start IMPURE -s -u -t 2>/dev/null || return 1
+	prompt_impure_gitstatus_inited=1
+	return 0
+}
+
+# Query git status via gitstatusd and populate impure's state variables.
+# Returns 0 on success, 1 if not in a git repo or gitstatus unavailable.
+prompt_impure_gitstatus_query() {
+	(( ${prompt_impure_gitstatus_inited:-0} )) || return 1
+	gitstatus_query -d "$PWD" IMPURE || return 1
+	[[ "$VCS_STATUS_RESULT" == ok-sync || "$VCS_STATUS_RESULT" == ok-async ]] || return 1
+
+	# Map VCS_STATUS_* to impure's internal state.
+	typeset -gA prompt_impure_vcs_info
+	prompt_impure_vcs_info[branch]="$VCS_STATUS_LOCAL_BRANCH"
+	prompt_impure_vcs_info[top]="$VCS_STATUS_WORKDIR"
+	prompt_impure_vcs_info[action]="$VCS_STATUS_ACTION"
+	prompt_impure_vcs_info[pwd]="$PWD"
+
+	# Dirty marker: staged or unstaged changes.
+	typeset -g prompt_impure_git_dirty=
+	if (( VCS_STATUS_HAS_STAGED || VCS_STATUS_HAS_UNSTAGED )); then
+		prompt_impure_git_dirty="*"
+	fi
+
+	# Staging summary: (+added ~modified -deleted)
+	local staging=""
+	(( VCS_STATUS_NUM_STAGED_NEW )) && staging+="+${VCS_STATUS_NUM_STAGED_NEW}"
+	local modified=$(( VCS_STATUS_NUM_STAGED - VCS_STATUS_NUM_STAGED_NEW - VCS_STATUS_NUM_STAGED_DELETED ))
+	(( modified > 0 )) && staging+="~${modified}"
+	(( VCS_STATUS_NUM_STAGED_DELETED )) && staging+="-${VCS_STATUS_NUM_STAGED_DELETED}"
+	typeset -g prompt_impure_git_staging="${staging:-}"
+
+	# Arrows: ahead/behind counts.
+	typeset -g prompt_impure_git_arrows=
+	local arrows=""
+	(( VCS_STATUS_COMMITS_AHEAD )) && arrows+="⇡${VCS_STATUS_COMMITS_AHEAD}"
+	(( VCS_STATUS_COMMITS_BEHIND )) && arrows+="⇣${VCS_STATUS_COMMITS_BEHIND}"
+	prompt_impure_git_arrows="${arrows:-}"
+
+	# Stash count.
+	typeset -g prompt_impure_git_stash=
+	(( VCS_STATUS_STASHES )) && prompt_impure_git_stash="≡"
+
+	# Mark dirty check as current.
+	typeset -gF prompt_impure_git_last_dirty_check_timestamp=$EPOCHREALTIME
+
+	return 0
+}
+
 prompt_impure_async_init() {
 	typeset -g prompt_impure_async_inited
 	if ((${prompt_impure_async_inited:-0})); then
@@ -673,17 +756,24 @@ prompt_impure_async_tasks() {
 
 	# Check if git integration is enabled (default: yes).
 	if ! zstyle -T ":prompt:impure:git" show; then
-		# Flush any in-flight async git jobs.
 		if (( ${prompt_impure_async_inited:-0} )); then
 			async_flush_jobs "prompt_impure"
 		fi
-
 		prompt_impure_clear_git_state
 		return
 	fi
 
-	# Initialize the async worker. If it fails (e.g. zpty unavailable),
-	# skip all async tasks and show prompt without git info.
+	# Try gitstatusd first (fast path: single IPC call instead of 6 git forks).
+	if (( ${prompt_impure_gitstatus_inited:-0} )) || prompt_impure_gitstatus_init; then
+		if prompt_impure_gitstatus_query; then
+			return
+		fi
+		# Not in a git repo — clear state and return.
+		prompt_impure_clear_git_state
+		return
+	fi
+
+	# Fallback: use zsh-async with individual git commands.
 	if ! prompt_impure_async_init; then
 		prompt_impure_clear_git_state
 		return
