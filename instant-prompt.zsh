@@ -28,12 +28,14 @@
 	typeset -g IMPURE_INSTANT_PROMPT_ACTIVE=1
 
 	# Redirect stdout/stderr during init to prevent output smearing over the prompt.
+	# Stdin goes to /dev/null so nothing reads from the terminal during init.
 	# Uses sysopen (like p10k) for robust fd management.
 	zmodload zsh/system 2>/dev/null || return
 	typeset -g IMPURE_IP_OUTPUT_FILE="${TMPDIR:-/tmp}/impure-ip-output-$$"
 	{ : > "$IMPURE_IP_OUTPUT_FILE" } 2>/dev/null || return
 	local fd_null
 	sysopen -ru fd_null /dev/null 2>/dev/null || return
-	exec {IMPURE_IP_FD_1}>&1 {IMPURE_IP_FD_2}>&2 0<&$fd_null 1>"$IMPURE_IP_OUTPUT_FILE"
+	exec {IMPURE_IP_FD_0}<&0 {IMPURE_IP_FD_1}>&1 {IMPURE_IP_FD_2}>&2 \
+		0<&$fd_null 1>"$IMPURE_IP_OUTPUT_FILE"
 	exec 2>&1 {fd_null}>&-
 }

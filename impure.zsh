@@ -259,14 +259,14 @@ prompt_impure_instant_prompt_cleanup() {
 	(( ${IMPURE_INSTANT_PROMPT_ACTIVE:-0} )) || return 0
 	typeset -g IMPURE_INSTANT_PROMPT_ACTIVE=0
 	if (( ${IMPURE_IP_FD_1:-0} )) && { true >&${IMPURE_IP_FD_1} } 2>/dev/null; then
-		exec 1>&${IMPURE_IP_FD_1} 2>&${IMPURE_IP_FD_2} \
-			{IMPURE_IP_FD_1}>&- {IMPURE_IP_FD_2}>&-
+		exec 0<&${IMPURE_IP_FD_0} 1>&${IMPURE_IP_FD_1} 2>&${IMPURE_IP_FD_2} \
+			{IMPURE_IP_FD_0}>&- {IMPURE_IP_FD_1}>&- {IMPURE_IP_FD_2}>&-
 	fi
 	if [[ -s "${IMPURE_IP_OUTPUT_FILE:-}" ]]; then
 		cat "$IMPURE_IP_OUTPUT_FILE" 2>/dev/null
 	fi
 	rm -f "${IMPURE_IP_OUTPUT_FILE:-}" 2>/dev/null
-	unset IMPURE_IP_FD_1 IMPURE_IP_FD_2 IMPURE_IP_OUTPUT_FILE
+	unset IMPURE_IP_FD_0 IMPURE_IP_FD_1 IMPURE_IP_FD_2 IMPURE_IP_OUTPUT_FILE
 	prompt_impure_reset_prompt
 }
 
