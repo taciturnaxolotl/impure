@@ -256,9 +256,16 @@ prompt_impure_preprompt_render() {
 prompt_impure_precmd() {
 	setopt localoptions noshwordsplit
 
-	# Instant prompt cleanup: enrich minimal prompt with full git/jj data.
+	# Instant prompt cleanup: restore fds, replay output, enrich with git/jj data.
 	if (( ${IMPURE_INSTANT_PROMPT_ACTIVE:-0} )); then
 		typeset -g IMPURE_INSTANT_PROMPT_ACTIVE=0
+		exec 1>&${IMPURE_IP_FD_1} 2>&${IMPURE_IP_FD_2} \
+			{IMPURE_IP_FD_1}>&- {IMPURE_IP_FD_2}>&- 2>/dev/null
+		if [[ -s "$IMPURE_IP_OUTPUT_FILE" ]]; then
+			cat "$IMPURE_IP_OUTPUT_FILE" 2>/dev/null
+		fi
+		rm -f "$IMPURE_IP_OUTPUT_FILE" 2>/dev/null
+		unset IMPURE_IP_FD_1 IMPURE_IP_FD_2 IMPURE_IP_OUTPUT_FILE
 		prompt_impure_reset_prompt
 	fi
 
@@ -1229,14 +1236,17 @@ prompt_impure_build_rprompt() {
 }
 
 prompt_impure_setup() {
-	# Prevent percentage showing up if output doesn't end with a newline.
-	export PROMPT_EOL_MARK=''
+	# Show a marker when command output doesn't end with a newline.
+	export PROMPT_EOL_MARK='%B%S%#%s%b'
 
 	prompt_opts=(subst percent)
 
 	# Borrowed from `promptinit`. Sets the prompt options in case Impure was not
 	# initialized via `promptinit`.
 	setopt noprompt{bang,cr,percent,subst} "prompt${^prompt_opts[@]}"
+
+	# Enable bracketed paste mode permanently (prevents accidental execution of pasted text).
+	print -rn -- $'\e[?2004h'
 
 	if [[ -z $prompt_newline ]]; then
 		# This variable needs to be set, usually set by promptinit.

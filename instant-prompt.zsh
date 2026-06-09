@@ -22,4 +22,14 @@ RPROMPT=''
 # Signal that instant prompt is active for cleanup on first precmd.
 typeset -g IMPURE_INSTANT_PROMPT_ACTIVE=1
 
-unset _ip_dir _ip_ssh _ip_minimal
+# Redirect stdout/stderr during init to prevent output smearing over the prompt.
+# Uses sysopen (like p10k) for robust fd management.
+zmodload zsh/system 2>/dev/null
+typeset -g IMPURE_IP_OUTPUT_FILE="${TMPDIR:-/tmp}/impure-ip-output-$$"
+{ : > "$IMPURE_IP_OUTPUT_FILE" } 2>/dev/null || return
+local _ip_fd_null
+sysopen -ru _ip_fd_null /dev/null 2>/dev/null || return
+exec {IMPURE_IP_FD_1}>&1 {IMPURE_IP_FD_2}>&2 0<&$_ip_fd_null 1>"$IMPURE_IP_OUTPUT_FILE"
+exec 2>&1 {_ip_fd_null}>&-
+
+unset _ip_dir _ip_ssh _ip_minimal _ip_fd_null
