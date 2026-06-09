@@ -7,7 +7,8 @@
 
 () {
 	# Build minimal prompt: path + newline + prompt symbol.
-	local dir="$PWD"
+	# Use %~ to match impure's prompt (shortens $HOME to ~).
+	local dir="${(%):-%~}"
 	local ssh=
 	[[ -n "$SSH_CLIENT$SSH_TTY$SSH_CONNECTION" ]] && ssh="${(%):-%m} "
 	local minimal="${ssh}${dir}"$'\n'"❯ "
