@@ -28,17 +28,23 @@
 # 165392 => 1d 21h 56m 32s
 # https://github.com/sindresorhus/pretty-time-zsh
 prompt_impure_human_time_to_var() {
-	local total_seconds=$1 var=$2
-	local days=$(( total_seconds / 60 / 60 / 24 ))
-	local hours=$(( total_seconds / 60 / 60 % 24 ))
-	local minutes=$(( total_seconds / 60 % 60 ))
-	local seconds=$(( total_seconds % 60 ))
+	local -F total_seconds=$1
+	local var=$2
+	local -i days=$(( total_seconds / 60 / 60 / 24 ))
+	local -i hours=$(( total_seconds / 60 / 60 % 24 ))
+	local -i minutes=$(( total_seconds / 60 % 60 ))
+	local -F seconds=$(( total_seconds - days*86400 - hours*3600 - minutes*60 ))
 
 	local formatted=
 	(( days > 0 )) && formatted+="${days}d "
 	(( hours > 0 )) && formatted+="${hours}h "
 	(( minutes > 0 )) && formatted+="${minutes}m "
-	formatted+="${seconds}s"
+	if (( minutes > 0 || hours > 0 || days > 0 )); then
+		formatted+="${(i)seconds}s"
+	else
+		local -F sec=$seconds
+		formatted+="$(printf '%.2f' $sec)s"
+	fi
 
 	typeset -g "${var}"="${formatted}"
 }
@@ -46,8 +52,7 @@ prompt_impure_human_time_to_var() {
 # Stores (into prompt_impure_cmd_exec_time) the execution
 # time of the last command if set threshold was exceeded.
 prompt_impure_check_cmd_exec_time() {
-	integer elapsed
-	(( elapsed = EPOCHSECONDS - ${prompt_impure_cmd_timestamp:-$EPOCHSECONDS} ))
+	local -F elapsed=$(( EPOCHREALTIME - ${prompt_impure_cmd_timestamp:-$EPOCHREALTIME} ))
 	typeset -g prompt_impure_cmd_exec_time=
 	(( elapsed >= ${IMPURE_CMD_MAX_EXEC_TIME:-3} )) && {
 		prompt_impure_human_time_to_var $elapsed "prompt_impure_cmd_exec_time"
@@ -96,7 +101,7 @@ prompt_impure_preexec() {
 		fi
 	fi
 
-	typeset -g prompt_impure_cmd_timestamp=$EPOCHSECONDS
+	typeset -gF prompt_impure_cmd_timestamp=$EPOCHREALTIME
 
 	# Shows the current directory and executed command in the title while a process is active.
 	prompt_impure_set_title 'ignore-escape' "$PWD:t: $2"
