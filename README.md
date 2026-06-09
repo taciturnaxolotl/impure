@@ -8,6 +8,9 @@ The canonical repo for this is hosted on tangled over at [`dunkirk.sh/impure`](h
 
 ## Features
 
+- **Instant prompt.** A minimal prompt (directory + symbol) appears immediately
+  when you open a terminal, before plugins or completions load. The full prompt
+  with git/jj data enriches asynchronously moments later. No cache files needed.
 - **Async git status.** Branch, dirty marker, and unpushed/unpulled arrows are
   computed in a background worker so the prompt never blocks.
 - **Staging summary.** Dirty repos show an oh-my-posh-style breakdown of the
@@ -25,18 +28,55 @@ The canonical repo for this is hosted on tangled over at [`dunkirk.sh/impure`](h
   and suffix segments.
 - **Exec time, SSH/container detection, VI-mode indicator, suspended-jobs
   marker** — all carried over from Pure.
+- **Bracketed paste mode.** Enabled automatically to prevent accidental execution
+  of pasted text.
+- **EOL marker.** Commands that don't print a trailing newline show a `%` marker
+  so output doesn't visually merge with the next prompt.
 
-Requires Git 2.15.2+ and ZSH 5.2+ (5.3+ recommended for VI-mode and transient
-prompt). `jujutsu` is optional and only needed for jj status.
+Requires Git 2.15.2+ and ZSH 5.8+ (for instant prompt). `jujutsu` is optional
+and only needed for jj status.
 
 ## Install
 
-### Arch Linux
+### Nix flake
 
-A `PKGBUILD` is provided under [`arch/`](arch/PKGBUILD). Build and install it
-with `makepkg -si`.
+Add impure as a flake input and source it in your home-manager config:
 
-### Manually
+```nix
+# flake.nix
+{
+  inputs.impure.url = "github:taciturnaxolotl/impure";
+}
+```
+
+```nix
+# home-manager module
+programs.zsh.initContent = ''
+  source ${inputs.impure}/async.zsh
+  IMPURE_CMD_MAX_EXEC_TIME=3
+  source ${inputs.impure}/impure.zsh
+'';
+```
+
+For instant prompt, source `instant-prompt.zsh` **before** compinit and plugins:
+
+```nix
+programs.zsh.initContent = ''
+  # Instant prompt — must be first
+  source ${inputs.impure}/instant-prompt.zsh
+
+  # Completions and plugins
+  autoload -Uz compinit && compinit -C
+  # ... your plugins ...
+
+  # Impure prompt
+  source ${inputs.impure}/async.zsh
+  IMPURE_CMD_MAX_EXEC_TIME=3
+  source ${inputs.impure}/impure.zsh
+'';
+```
+
+### Manual
 
 1. Clone this repo somewhere, e.g. `$HOME/.zsh/impure`:
 
@@ -45,21 +85,35 @@ with `makepkg -si`.
    git clone https://tangled.org/dunkirk.sh/impure "$HOME/.zsh/impure"
    ```
 
-2. Add the path to `fpath` in `$HOME/.zshrc`:
+2. Source the files in `$HOME/.zshrc`. For instant prompt, `instant-prompt.zsh`
+   must be sourced **before** compinit and plugins:
 
    ```sh
-   fpath+=("$HOME/.zsh/impure")
+   # Instant prompt — must be first
+   source "$HOME/.zsh/impure/instant-prompt.zsh"
+
+   # Completions and plugins
+   autoload -Uz compinit && compinit -C
+   # ... your plugins ...
+
+   # Impure prompt
+   source "$HOME/.zsh/impure/async.zsh"
+   IMPURE_CMD_MAX_EXEC_TIME=3
+   source "$HOME/.zsh/impure/impure.zsh"
    ```
 
-## Getting started
+### Via promptinit (no instant prompt)
 
-Initialize the prompt system (if not already) and choose `impure`:
+If you don't need instant prompt, you can use the traditional promptinit method:
 
 ```sh
-# .zshrc
+fpath+=("$HOME/.zsh/impure")
 autoload -U promptinit; promptinit
 prompt impure
 ```
+
+This method does not support instant prompt. Use the manual or nix install
+methods above for the full experience.
 
 ## Configuration
 
