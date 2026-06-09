@@ -253,21 +253,28 @@ prompt_impure_preprompt_render() {
 	typeset -g prompt_impure_last_prompt=$prompt_fingerprint
 }
 
+# Instant prompt cleanup: restore fds, replay captured output, redraw prompt.
+# Validates fds before use to prevent errors if they were closed externally.
+prompt_impure_instant_prompt_cleanup() {
+	(( ${IMPURE_INSTANT_PROMPT_ACTIVE:-0} )) || return 0
+	typeset -g IMPURE_INSTANT_PROMPT_ACTIVE=0
+	if (( ${IMPURE_IP_FD_1:-0} )) && { true >&${IMPURE_IP_FD_1} } 2>/dev/null; then
+		exec 1>&${IMPURE_IP_FD_1} 2>&${IMPURE_IP_FD_2} \
+			{IMPURE_IP_FD_1}>&- {IMPURE_IP_FD_2}>&-
+	fi
+	if [[ -s "${IMPURE_IP_OUTPUT_FILE:-}" ]]; then
+		cat "$IMPURE_IP_OUTPUT_FILE" 2>/dev/null
+	fi
+	rm -f "${IMPURE_IP_OUTPUT_FILE:-}" 2>/dev/null
+	unset IMPURE_IP_FD_1 IMPURE_IP_FD_2 IMPURE_IP_OUTPUT_FILE
+	prompt_impure_reset_prompt
+}
+
 prompt_impure_precmd() {
 	setopt localoptions noshwordsplit
 
-	# Instant prompt cleanup: restore fds, replay output, enrich with git/jj data.
-	if (( ${IMPURE_INSTANT_PROMPT_ACTIVE:-0} )); then
-		typeset -g IMPURE_INSTANT_PROMPT_ACTIVE=0
-		exec 1>&${IMPURE_IP_FD_1} 2>&${IMPURE_IP_FD_2} \
-			{IMPURE_IP_FD_1}>&- {IMPURE_IP_FD_2}>&- 2>/dev/null
-		if [[ -s "$IMPURE_IP_OUTPUT_FILE" ]]; then
-			cat "$IMPURE_IP_OUTPUT_FILE" 2>/dev/null
-		fi
-		rm -f "$IMPURE_IP_OUTPUT_FILE" 2>/dev/null
-		unset IMPURE_IP_FD_1 IMPURE_IP_FD_2 IMPURE_IP_OUTPUT_FILE
-		prompt_impure_reset_prompt
-	fi
+	# Clean up instant prompt if active.
+	prompt_impure_instant_prompt_cleanup
 
 	# Check execution time and store it in a variable.
 	prompt_impure_check_cmd_exec_time
