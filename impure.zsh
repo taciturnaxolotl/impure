@@ -262,6 +262,10 @@ prompt_impure_instant_prompt_cleanup() {
 		exec 0<&${IMPURE_IP_FD_0} 1>&${IMPURE_IP_FD_1} 2>&${IMPURE_IP_FD_2} \
 			{IMPURE_IP_FD_0}>&- {IMPURE_IP_FD_1}>&- {IMPURE_IP_FD_2}>&-
 	fi
+	# Clear the instant prompt from screen: restore cursor, erase below.
+	zmodload zsh/terminfo 2>/dev/null
+	print -rn -- "${terminfo[rc]:-$'\e8'}${terminfo[ed]:-$'\e[J'}"
+	# Replay any captured init output above the prompt.
 	if [[ -s "${IMPURE_IP_OUTPUT_FILE:-}" ]]; then
 		cat "$IMPURE_IP_OUTPUT_FILE" 2>/dev/null
 	fi
