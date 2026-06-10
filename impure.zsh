@@ -301,6 +301,13 @@ prompt_impure_precmd() {
 
 	# Handle Ctrl+C: install TRAPINT so transient fires on interrupt too.
 	TRAPINT() {
+		# Ctrl+C at the prompt doesn't run precmd, so restore PROMPT directly
+		# if a transient swap is pending, otherwise it stays stuck as ❯.
+		if [[ -n ${prompt_impure_saved_prompt:-} ]]; then
+			PROMPT=$prompt_impure_saved_prompt
+			RPROMPT=$prompt_impure_saved_rprompt
+			unset prompt_impure_saved_prompt prompt_impure_saved_rprompt
+		fi
 		typeset -g prompt_impure_transient=1
 		return $(( 128 + $1 ))
 	}
@@ -1143,7 +1150,9 @@ prompt_impure_reset_vim_prompt_widget() {
 # We wrap accept-line to set a flag, then use zle redisplay in line-finish
 # to rewrite the prompt area before zsh commits it to scrollback.
 prompt_impure_accept_line() {
-	typeset -g prompt_impure_transient=1
+	# Only set the transient flag for complete lines. In continuation mode
+	# ($CONTEXT == cont, e.g. unclosed quote), don't go transient.
+	[[ $CONTEXT != cont ]] && typeset -g prompt_impure_transient=1
 	zle .accept-line
 }
 
@@ -1152,9 +1161,6 @@ prompt_impure_transient_redraw() {
 
 	(( ${prompt_impure_transient:-0} )) || return
 	unset prompt_impure_transient
-
-	# Don't collapse on continuation lines (unclosed quote, etc.).
-	[[ $CONTEXT == cont ]] && return
 
 	local prompt_color
 	prompt_color=$prompt_impure_colors[prompt:success]
