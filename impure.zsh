@@ -196,7 +196,11 @@ prompt_impure_preprompt_render() {
 	psvar[18]=
 	[[ -n $prompt_impure_git_arrows ]] && psvar[18]=$prompt_impure_git_arrows
 
+	# psvar[28]: Detached HEAD short hash (git only, shown when branch is empty).
+	psvar[28]=${prompt_impure_git_detached}
 
+	# psvar[29]: Conflicted file count (git or jj, e.g. !2).
+	psvar[29]=${prompt_impure_git_conflicted:-${prompt_impure_jj_conflicted:-}}
 	# psvar[20]: Command execution time (used in RPROMPT).
 	psvar[20]=${prompt_impure_cmd_exec_time}
 
@@ -564,7 +568,7 @@ prompt_impure_async_jj_status() {
 	local jj_info
 	# Use | as delimiter between bookmarks and change ID for reliable parsing.
 	# Filter out jj/keep/ (auto-generated anonymous branch bookmarks) and strip heads/ prefix.
-	jj_info=$(command jj log --no-graph -r '@' -T 'bookmarks.filter(|b| !b.name().starts_with("jj/keep/")).map(|b| b.name().replace("heads/", "")).join(" ") ++ "|" ++ change_id.shortest()' 2>/dev/null) || return 1
+	jj_info=$(command jj log --no-graph -r '@' -T 'bookmarks.filter(|b| !b.name().starts_with("jj/keep/")).map(|b| b.name().replace("heads/", "")).join(" ") ++ "|" ++ change_id.shortest() ++ "|" ++ conflicted_files().len()' 2>/dev/null) || return 1
 
 	# Get working copy status: count changed files via process substitution
 	# to avoid storing the full output in a variable.
@@ -584,8 +588,7 @@ prompt_impure_async_jj_status() {
 	local working_changes=""
 	(( count > 0 )) && working_changes=" ~${count}"
 
-	# Output: bookmark(s) space change_id space working_changes
-	# The renderer will split and color the change_id cyan.
+	# Output: bookmarks|changeid|conflicted_count working_changes
 	print -r -- "${jj_info}${working_changes}"
 }
 
@@ -631,7 +634,7 @@ prompt_impure_async_worker_sync() {
 }
 
 prompt_impure_clear_git_state() {
-	unset prompt_impure_git_dirty prompt_impure_git_staging prompt_impure_git_arrows prompt_impure_git_fetch_pattern prompt_impure_git_last_fetch_timestamp
+	unset prompt_impure_git_dirty prompt_impure_git_staging prompt_impure_git_arrows prompt_impure_git_fetch_pattern prompt_impure_git_last_fetch_timestamp prompt_impure_git_detached prompt_impure_git_conflicted
 	typeset -gA prompt_impure_worker_env=()
 	typeset -gA prompt_impure_worker_env_pending=()
 	typeset -gA prompt_impure_vcs_info
@@ -645,6 +648,7 @@ prompt_impure_clear_jj_state() {
 	typeset -g prompt_impure_jj_bookmark=
 	typeset -g prompt_impure_jj_changeid=
 	typeset -g prompt_impure_jj_working=
+	typeset -g prompt_impure_jj_conflicted=
 }
 
 # Initialize gitstatusd for fast git status queries.
@@ -703,9 +707,10 @@ prompt_impure_gitstatus_query() {
 	fi
 
 	# Staging summary: (+added ~modified -deleted)
+	# Subtract conflicted from modified since we show conflicts separately.
 	local staging=""
-	(( VCS_STATUS_NUM_STAGED_NEW )) && staging+="+${VCS_STATUS_NUM_STAGED_NEW} "
-	local modified=$(( VCS_STATUS_NUM_STAGED - VCS_STATUS_NUM_STAGED_NEW - VCS_STATUS_NUM_STAGED_DELETED ))
+	(( VCS_STATUS_NUM_STAGED_NEW )) && staging="+${VCS_STATUS_NUM_STAGED_NEW} "
+	local modified=$(( VCS_STATUS_NUM_STAGED - VCS_STATUS_NUM_STAGED_NEW - VCS_STATUS_NUM_STAGED_DELETED - VCS_STATUS_NUM_CONFLICTED ))
 	(( modified > 0 )) && staging+="~${modified} "
 	(( VCS_STATUS_NUM_STAGED_DELETED )) && staging+="-${VCS_STATUS_NUM_STAGED_DELETED} "
 	staging=${staging% }  # trim trailing space
@@ -715,6 +720,16 @@ prompt_impure_gitstatus_query() {
 	local REPLY
 	prompt_impure_check_git_arrows $VCS_STATUS_COMMITS_AHEAD $VCS_STATUS_COMMITS_BEHIND
 	typeset -g prompt_impure_git_arrows=${REPLY:-}
+
+	# Detached HEAD: show short commit hash when no branch name.
+	typeset -g prompt_impure_git_detached=
+	[[ -z $VCS_STATUS_LOCAL_BRANCH && -n $VCS_STATUS_COMMIT ]] && \
+		prompt_impure_git_detached="${VCS_STATUS_COMMIT[1,8]}"
+
+	# Conflicted files.
+	typeset -g prompt_impure_git_conflicted=
+	(( VCS_STATUS_NUM_CONFLICTED )) && \
+		prompt_impure_git_conflicted="!${VCS_STATUS_NUM_CONFLICTED}"
 
 	return 0
 }
@@ -1096,24 +1111,32 @@ prompt_impure_async_callback() {
 			local prev_bookmark=$prompt_impure_jj_bookmark
 			local prev_changeid=$prompt_impure_jj_changeid
 			local prev_working=$prompt_impure_jj_working
+			local prev_conflicted=$prompt_impure_jj_conflicted
 			if (( code == 0 )); then
-				# Parse: "bookmark(s)|changeID working_changes"
-				# Split on | to separate bookmarks from changeID+working.
+				# Parse: "bookmarks|changeid|conflicted_count working_changes"
 				local before_pipe after_pipe
 				before_pipe=${output%%|*}
 				after_pipe=${output#*|}
 				typeset -g prompt_impure_jj_bookmark="${before_pipe%% }"
-				# First token after | is the change ID, rest is working changes.
-				local -a after_parts
-				after_parts=(${=after_pipe})
-				typeset -g prompt_impure_jj_changeid="${after_parts[1]:-}"
-				typeset -g prompt_impure_jj_working="${(j: :)after_parts[2,-1]}"
+				# Second field: change_id|conflicted_count + trailing working_changes
+				local mid rest
+				mid=${after_pipe%%|*}
+				rest=${after_pipe#*|}
+				typeset -g prompt_impure_jj_changeid="${mid}"
+				# rest = "N working_changes" — first token is conflict count
+				local -a rest_parts
+				rest_parts=(${=rest})
+				local conflict_n=${rest_parts[1]:-0}
+				typeset -g prompt_impure_jj_conflicted=
+				(( conflict_n > 0 )) && prompt_impure_jj_conflicted="!${conflict_n}"
+				typeset -g prompt_impure_jj_working="${(j: :)rest_parts[2,-1]}"
 			else
 				typeset -g prompt_impure_jj_bookmark=
 				typeset -g prompt_impure_jj_changeid=
 				typeset -g prompt_impure_jj_working=
+				typeset -g prompt_impure_jj_conflicted=
 			fi
-			[[ $prev_bookmark != $prompt_impure_jj_bookmark || $prev_changeid != $prompt_impure_jj_changeid || $prev_working != $prompt_impure_jj_working ]] && do_render=1
+			[[ $prev_bookmark != $prompt_impure_jj_bookmark || $prev_changeid != $prompt_impure_jj_changeid || $prev_working != $prompt_impure_jj_working || $prev_conflicted != $prompt_impure_jj_conflicted ]] && do_render=1
 			;;
 	esac
 
@@ -1471,6 +1494,8 @@ prompt_impure_setup() {
 	#   psvar[16] = git working tree dirty marker ("*")
 	#   psvar[17] = git action (e.g. rebase, merge)
 	#   psvar[18] = git arrows with counts (e.g. ⇡1 ⇣3)
+	#   psvar[28] = git detached HEAD short hash (shown when branch is empty)
+	#   psvar[29] = git conflicted count (e.g. !2)
 	#   psvar[20] = exec time (e.g. 1d 3h 2m 5s) — shown in RPROMPT
 	#   psvar[21] = virtualenv/nix-shell name — shown in RPROMPT
 	#   psvar[22] = custom prefix (set by prompt_impure_precustom)
@@ -1490,12 +1515,14 @@ prompt_impure_setup() {
 	PROMPT+='%(24V.%F{$prompt_impure_colors[zmx]}%24v%f .)'
 	prompt_impure_set_path_separator
 	PROMPT+='${${prompt_impure_path_separator_dimmed:+$(prompt_impure_render_dimmed_path)}:-${prompt_impure_path_segment}}'
-	# Git: branch + staging summary + dirty marker + arrows (oh-my-posh style)
+	# Git: branch (or detached HEAD hash) + staging + dirty + conflicted + action + arrows
 	PROMPT+='%(14V. %F{${prompt_impure_git_branch_color}}%14v%f.)'
+	PROMPT+='%(28V. %F{$prompt_impure_colors[git:branch]}%28v%f.)'
 	PROMPT+='%(15V.%F{$prompt_impure_colors[git:dirty]} (%15v)%f.)'
 	PROMPT+='%(16V.%F{$prompt_impure_colors[git:dirty]}%16v%f.)'
 	PROMPT+='%(17V. %F{$prompt_impure_colors[git:action]}%17v%f.)'
 	PROMPT+='%(18V. %F{cyan}%18v%f.)'
+	PROMPT+='%(29V. %F{red}%29v%f.)'
 	# Jujutsu: bookmark (grey) + @changeID (cyan) + working changes (grey)
 	PROMPT+='%(25V. %F{$prompt_impure_colors[jj]}%25v%f.)'
 	PROMPT+='%(26V. %F{cyan}@%26v%f.)'
