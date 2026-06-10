@@ -691,12 +691,10 @@ prompt_impure_gitstatus_query() {
 	staging=${staging% }  # trim trailing space
 	typeset -g prompt_impure_git_staging="${staging:-}"
 
-	# Arrows: ahead/behind counts.
-	typeset -g prompt_impure_git_arrows=
-	local arrows=""
-	(( VCS_STATUS_COMMITS_AHEAD )) && arrows+="${IMPURE_GIT_UP_ARROW:-⇡}${VCS_STATUS_COMMITS_AHEAD} "
-	(( VCS_STATUS_COMMITS_BEHIND )) && arrows+="${IMPURE_GIT_DOWN_ARROW:-⇣}${VCS_STATUS_COMMITS_BEHIND} "
-	prompt_impure_git_arrows="${arrows% }"
+	# Arrows: ahead/behind counts (reuse the canonical formatter).
+	local REPLY
+	prompt_impure_check_git_arrows $VCS_STATUS_COMMITS_AHEAD $VCS_STATUS_COMMITS_BEHIND
+	typeset -g prompt_impure_git_arrows=${REPLY:-}
 
 	return 0
 }
@@ -1145,10 +1143,8 @@ prompt_impure_reset_vim_prompt_widget() {
 # We wrap accept-line to set a flag, then use zle redisplay in line-finish
 # to rewrite the prompt area before zsh commits it to scrollback.
 prompt_impure_accept_line() {
+	typeset -g prompt_impure_transient=1
 	zle .accept-line
-	# After accept-line, if PENDING > 0 the buffer was incomplete (unclosed
-	# quote, etc.) and zle is waiting for more input. Don't go transient.
-	(( ${PENDING:-0} == 0 )) && typeset -g prompt_impure_transient=1
 }
 
 prompt_impure_transient_redraw() {
@@ -1156,6 +1152,9 @@ prompt_impure_transient_redraw() {
 
 	(( ${prompt_impure_transient:-0} )) || return
 	unset prompt_impure_transient
+
+	# Don't collapse on continuation lines (unclosed quote, etc.).
+	[[ $CONTEXT == cont ]] && return
 
 	local prompt_color
 	prompt_color=$prompt_impure_colors[prompt:success]
@@ -1461,7 +1460,6 @@ prompt_impure_setup() {
 	PROMPT+='%(16V.%F{$prompt_impure_colors[git:dirty]}%16v%f.)'
 	PROMPT+='%(17V. %F{$prompt_impure_colors[git:action]}%17v%f.)'
 	PROMPT+='%(18V. %F{cyan}%18v%f.)'
-
 	# Jujutsu: bookmark (grey) + @changeID (cyan) + working changes (grey)
 	PROMPT+='%(25V. %F{$prompt_impure_colors[jj]}%25v%f.)'
 	PROMPT+='%(26V. %F{cyan}@%26v%f.)'
