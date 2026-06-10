@@ -168,9 +168,7 @@ prompt_impure_preprompt_render() {
 
 	unset prompt_impure_async_render_requested
 
-	# Update git branch color based on cache state.
 	typeset -g prompt_impure_git_branch_color=$prompt_impure_colors[git:branch]
-	[[ -n ${prompt_impure_git_last_dirty_check_timestamp+x} ]] && prompt_impure_git_branch_color=$prompt_impure_colors[git:branch:cached]
 
 	# Update psvar values. PROMPT uses %(NV.true.false) to conditionally
 	# render each part. See prompt_impure_setup for the PROMPT template.
@@ -612,7 +610,7 @@ prompt_impure_async_worker_sync() {
 }
 
 prompt_impure_clear_git_state() {
-	unset prompt_impure_git_dirty prompt_impure_git_staging prompt_impure_git_last_dirty_check_timestamp prompt_impure_git_arrows prompt_impure_git_fetch_pattern
+	unset prompt_impure_git_dirty prompt_impure_git_staging prompt_impure_git_arrows prompt_impure_git_fetch_pattern
 	typeset -gA prompt_impure_worker_env=()
 	typeset -gA prompt_impure_worker_env_pending=()
 	typeset -gA prompt_impure_vcs_info
@@ -697,9 +695,6 @@ prompt_impure_gitstatus_query() {
 	(( VCS_STATUS_COMMITS_AHEAD )) && arrows+="⇡${VCS_STATUS_COMMITS_AHEAD}"
 	(( VCS_STATUS_COMMITS_BEHIND )) && arrows+="⇣${VCS_STATUS_COMMITS_BEHIND}"
 	prompt_impure_git_arrows="${arrows:-}"
-
-	# Mark dirty check as current.
-	typeset -gF prompt_impure_git_last_dirty_check_timestamp=$EPOCHREALTIME
 
 	return 0
 }
@@ -805,7 +800,6 @@ prompt_impure_async_tasks() {
 
 		# Reset preprompt variables, switching working tree.
 		unset prompt_impure_git_dirty prompt_impure_git_staging
-		unset prompt_impure_git_last_dirty_check_timestamp
 		unset prompt_impure_git_arrows
 		unset prompt_impure_git_fetch_pattern
 		prompt_impure_vcs_info[branch]=
@@ -873,11 +867,7 @@ prompt_impure_async_refresh() {
 
 	# If dirty checking is sufficiently fast,
 	# tell the worker to check it again, or wait for timeout.
-	integer time_since_last_dirty_check=$(( EPOCHSECONDS - ${prompt_impure_git_last_dirty_check_timestamp:-0} ))
-	if (( time_since_last_dirty_check > ${IMPURE_GIT_DELAY_DIRTY_CHECK:-1800} )); then
-		unset prompt_impure_git_last_dirty_check_timestamp
-		async_job "prompt_impure" prompt_impure_async_git_dirty ${IMPURE_GIT_UNTRACKED_DIRTY:-1} || return
-	fi
+	async_job "prompt_impure" prompt_impure_async_git_dirty ${IMPURE_GIT_UNTRACKED_DIRTY:-1} || return
 
 }
 
@@ -1020,11 +1010,6 @@ prompt_impure_async_callback() {
 
 			[[ $prev_staging != ${prompt_impure_git_staging:-} || $prev_dirty != ${prompt_impure_git_dirty:-} ]] && do_render=1
 
-			# When `prompt_impure_git_last_dirty_check_timestamp` is set, the Git info is displayed
-			# in a different color. To distinguish between a "fresh" and a "cached" result, the
-			# preprompt is rendered before setting this variable. Thus, only upon the next
-			# rendering of the preprompt will the result appear in a different color.
-			(( $exec_time > 5 )) && prompt_impure_git_last_dirty_check_timestamp=$EPOCHSECONDS
 			;;
 		prompt_impure_async_git_fetch|prompt_impure_async_git_arrows)
 			# `prompt_impure_async_git_fetch` executes `prompt_impure_async_git_arrows`
@@ -1299,7 +1284,6 @@ prompt_impure_preview() {
 	print
 	print -P "%F{$c[prompt:error]}${IMPURE_PROMPT_SYMBOL:-❯}%f  prompt after error"
 	print; print
-	print -P "%F{$c[git:branch:cached]}main%f  branch color when data is cached"
 	print; print
 	print -P "%F{$c[user:root]}root%f${host_sample}  root user"
 	print; print
@@ -1356,7 +1340,6 @@ prompt_impure_setup() {
 		execution_time       yellow
 		git:arrow            cyan
 		git:branch           242
-		git:branch:cached    red
 		git:action           yellow
 		git:dirty            242
 		host                 242
