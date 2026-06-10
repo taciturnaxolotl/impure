@@ -657,7 +657,7 @@ prompt_impure_gitstatus_init() {
 		setopt no_xtrace
 		builtin source "$gitstatus_plugin" 2>/dev/null
 	} || return 1
-	gitstatus_start -s 1 -u 1 -t 5 IMPURE 2>/dev/null || return 1
+	gitstatus_start -s -1 -u -1 -t 5 IMPURE 2>/dev/null || return 1
 	prompt_impure_gitstatus_inited=1
 	return 0
 }
@@ -684,10 +684,11 @@ prompt_impure_gitstatus_query() {
 
 	# Staging summary: (+added ~modified -deleted)
 	local staging=""
-	(( VCS_STATUS_NUM_STAGED_NEW )) && staging+="+${VCS_STATUS_NUM_STAGED_NEW}"
+	(( VCS_STATUS_NUM_STAGED_NEW )) && staging+="+${VCS_STATUS_NUM_STAGED_NEW} "
 	local modified=$(( VCS_STATUS_NUM_STAGED - VCS_STATUS_NUM_STAGED_NEW - VCS_STATUS_NUM_STAGED_DELETED ))
-	(( modified > 0 )) && staging+="~${modified}"
-	(( VCS_STATUS_NUM_STAGED_DELETED )) && staging+="-${VCS_STATUS_NUM_STAGED_DELETED}"
+	(( modified > 0 )) && staging+="~${modified} "
+	(( VCS_STATUS_NUM_STAGED_DELETED )) && staging+="-${VCS_STATUS_NUM_STAGED_DELETED} "
+	staging=${staging% }  # trim trailing space
 	typeset -g prompt_impure_git_staging="${staging:-}"
 
 	# Arrows: ahead/behind counts.
