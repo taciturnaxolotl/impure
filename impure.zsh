@@ -197,9 +197,6 @@ prompt_impure_preprompt_render() {
 	psvar[18]=
 	[[ -n $prompt_impure_git_arrows ]] && psvar[18]=$prompt_impure_git_arrows
 
-	# psvar[19]: Git stash symbol.
-	psvar[19]=
-	[[ -n $prompt_impure_git_stash ]] && psvar[19]=${IMPURE_GIT_STASH_SYMBOL-≡}
 
 	# psvar[20]: Command execution time (used in RPROMPT).
 	psvar[20]=${prompt_impure_cmd_exec_time}
@@ -523,9 +520,6 @@ prompt_impure_async_git_arrows() {
 	command git rev-list --left-right --count HEAD...@'{u}'
 }
 
-prompt_impure_async_git_stash() {
-	command git rev-list --walk-reflogs --count refs/stash
-}
 
 # Walk up from $PWD looking for a .jj directory. Returns 0 if inside a
 # Jujutsu repo, 1 otherwise. Shared by the sync dispatch path and the
@@ -618,7 +612,7 @@ prompt_impure_async_worker_sync() {
 }
 
 prompt_impure_clear_git_state() {
-	unset prompt_impure_git_dirty prompt_impure_git_staging prompt_impure_git_last_dirty_check_timestamp prompt_impure_git_arrows prompt_impure_git_stash prompt_impure_git_fetch_pattern
+	unset prompt_impure_git_dirty prompt_impure_git_staging prompt_impure_git_last_dirty_check_timestamp prompt_impure_git_arrows prompt_impure_git_fetch_pattern
 	typeset -gA prompt_impure_worker_env=()
 	typeset -gA prompt_impure_worker_env_pending=()
 	typeset -gA prompt_impure_vcs_info
@@ -683,9 +677,9 @@ prompt_impure_gitstatus_query() {
 	prompt_impure_vcs_info[action]="$VCS_STATUS_ACTION"
 	prompt_impure_vcs_info[pwd]="$PWD"
 
-	# Dirty marker: staged or unstaged changes.
+	# Dirty marker: only unstaged/untracked changes (matches git status --porcelain behavior).
 	typeset -g prompt_impure_git_dirty=
-	if (( VCS_STATUS_HAS_STAGED || VCS_STATUS_HAS_UNSTAGED )); then
+	if (( VCS_STATUS_HAS_UNSTAGED || VCS_STATUS_HAS_UNTRACKED )); then
 		prompt_impure_git_dirty="*"
 	fi
 
@@ -703,10 +697,6 @@ prompt_impure_gitstatus_query() {
 	(( VCS_STATUS_COMMITS_AHEAD )) && arrows+="⇡${VCS_STATUS_COMMITS_AHEAD}"
 	(( VCS_STATUS_COMMITS_BEHIND )) && arrows+="⇣${VCS_STATUS_COMMITS_BEHIND}"
 	prompt_impure_git_arrows="${arrows:-}"
-
-	# Stash count.
-	typeset -g prompt_impure_git_stash=
-	(( VCS_STATUS_STASHES )) && prompt_impure_git_stash="≡"
 
 	# Mark dirty check as current.
 	typeset -gF prompt_impure_git_last_dirty_check_timestamp=$EPOCHREALTIME
@@ -817,7 +807,6 @@ prompt_impure_async_tasks() {
 		unset prompt_impure_git_dirty prompt_impure_git_staging
 		unset prompt_impure_git_last_dirty_check_timestamp
 		unset prompt_impure_git_arrows
-		unset prompt_impure_git_stash
 		unset prompt_impure_git_fetch_pattern
 		prompt_impure_vcs_info[branch]=
 		prompt_impure_vcs_info[top]=
@@ -890,12 +879,6 @@ prompt_impure_async_refresh() {
 		async_job "prompt_impure" prompt_impure_async_git_dirty ${IMPURE_GIT_UNTRACKED_DIRTY:-1} || return
 	fi
 
-	# If stash is enabled, tell async worker to count stashes
-	if zstyle -t ":prompt:impure:git:stash" show; then
-		async_job "prompt_impure" prompt_impure_async_git_stash || return
-	else
-		unset prompt_impure_git_stash
-	fi
 }
 
 prompt_impure_check_git_arrows() {
@@ -921,7 +904,7 @@ prompt_impure_async_callback() {
 	fi
 
 	case $job in
-		prompt_impure_async_vcs_info|prompt_impure_async_git_aliases|prompt_impure_async_git_dirty|prompt_impure_async_git_fetch|prompt_impure_async_git_arrows|prompt_impure_async_git_stash)
+		prompt_impure_async_vcs_info|prompt_impure_async_git_aliases|prompt_impure_async_git_dirty|prompt_impure_async_git_fetch|prompt_impure_async_git_arrows)
 			[[ ${prompt_impure_worker_env[pwd]-} == $PWD ]] || return
 			;;
 	esac
@@ -1008,7 +991,7 @@ prompt_impure_async_callback() {
 			# Git directory. Run the async refresh tasks.
 			[[ -n $info[top] ]] && [[ -z $prompt_impure_vcs_info[top] ]] && prompt_impure_async_refresh
 
-			# Always update branch, top-level and stash.
+			# Always update branch and top-level.
 			prompt_impure_vcs_info[branch]=$info[branch]
 			prompt_impure_vcs_info[top]=$info[top]
 			prompt_impure_vcs_info[action]=$info[action]
@@ -1075,11 +1058,7 @@ prompt_impure_async_callback() {
 					;;
 			esac
 			;;
-		prompt_impure_async_git_stash)
-			local prev_stash=$prompt_impure_git_stash
-			typeset -g prompt_impure_git_stash=$output
-			[[ $prev_stash != $prompt_impure_git_stash ]] && do_render=1
-			;;
+
 		prompt_impure_async_jj_status)
 			local prev_bookmark=$prompt_impure_jj_bookmark
 			local prev_changeid=$prompt_impure_jj_changeid
@@ -1314,7 +1293,7 @@ prompt_impure_preview() {
 
 	# Sample prompt with all components visible.
 	# Left side: info segments. Right side (RPROMPT): exec time + nix shell + symbol.
-	print -P "%F{$c[custom:prefix]}prefix%f %F{$c[suspended_jobs]}${IMPURE_SUSPENDED_JOBS_SYMBOL-✦}%f %F{$c[user]}zaphod%f${host_sample} %F{$c[zmx]}[zmx]%f ${path_sample} %F{$c[git:branch]}main%f%F{$c[git:dirty]}*%f %F{$c[git:action]}rebase-i%f %F{$c[git:arrow]}${IMPURE_GIT_UP_ARROW:-⇡}2 ${IMPURE_GIT_DOWN_ARROW:-⇣}1%f %F{$c[git:stash]}${IMPURE_GIT_STASH_SYMBOL-≡}%f %F{$c[custom:suffix]}suffix%f"
+	print -P "%F{$c[custom:prefix]}prefix%f %F{$c[suspended_jobs]}${IMPURE_SUSPENDED_JOBS_SYMBOL-✦}%f %F{$c[user]}zaphod%f${host_sample} %F{$c[zmx]}[zmx]%f ${path_sample} %F{$c[git:branch]}main%f%F{$c[git:dirty]}*%f %F{$c[git:action]}rebase-i%f %F{$c[git:arrow]}${IMPURE_GIT_UP_ARROW:-⇡}2 ${IMPURE_GIT_DOWN_ARROW:-⇣}1%f %F{$c[custom:suffix]}suffix%f"
 	print -P "  ← left side above | right side below →"
 	print -P "%F{$c[execution_time]}42s%f %F{$c[nix-shell]}pure%f %F{$c[prompt:success]}${IMPURE_PROMPT_SYMBOL:-❯}%f"
 	print
@@ -1376,7 +1355,6 @@ prompt_impure_setup() {
 		custom:suffix        242
 		execution_time       yellow
 		git:arrow            cyan
-		git:stash            cyan
 		git:branch           242
 		git:branch:cached    red
 		git:action           yellow
@@ -1443,7 +1421,6 @@ prompt_impure_setup() {
 	#   psvar[16] = git working tree dirty marker ("*")
 	#   psvar[17] = git action (e.g. rebase, merge)
 	#   psvar[18] = git arrows with counts (e.g. ⇡1 ⇣3)
-	#   psvar[19] = git stash symbol (e.g. ≡)
 	#   psvar[20] = exec time (e.g. 1d 3h 2m 5s) — shown in RPROMPT
 	#   psvar[21] = virtualenv/nix-shell name — shown in RPROMPT
 	#   psvar[22] = custom prefix (set by prompt_impure_precustom)
@@ -1469,7 +1446,7 @@ prompt_impure_setup() {
 	PROMPT+='%(16V.%F{$prompt_impure_colors[git:dirty]}%16v%f.)'
 	PROMPT+='%(17V. %F{$prompt_impure_colors[git:action]}%17v%f.)'
 	PROMPT+='%(18V. %F{cyan}%18v%f.)'
-	PROMPT+='%(19V. %F{$prompt_impure_colors[git:stash]}%19v%f.)'
+
 	# Jujutsu: bookmark (grey) + @changeID (cyan) + working changes (grey)
 	PROMPT+='%(25V. %F{$prompt_impure_colors[jj]}%25v%f.)'
 	PROMPT+='%(26V. %F{cyan}@%26v%f.)'

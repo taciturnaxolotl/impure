@@ -42,7 +42,6 @@ typeset -gA prompt_impure_vcs_info=(
 )
 typeset -g prompt_impure_git_dirty='*'
 typeset -g prompt_impure_git_arrows='⇣⇡'
-typeset -g prompt_impure_git_stash='1'
 typeset -g prompt_impure_cmd_exec_time='42s'
 typeset -g prompt_impure_cmd_timestamp=$EPOCHSECONDS
 

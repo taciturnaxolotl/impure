@@ -33,7 +33,6 @@ assert_git_state_empty() {
 	assert_empty "${prompt_impure_git_dirty-}" "dirty marker should be cleared $message" || return
 	assert_empty "${prompt_impure_git_last_dirty_check_timestamp-}" "cached dirty timestamp should be cleared $message" || return
 	assert_empty "${prompt_impure_git_arrows-}" "arrows should be cleared $message" || return
-	assert_empty "${prompt_impure_git_stash-}" "stash should be cleared $message" || return
 	assert_empty "${prompt_impure_git_fetch_pattern-}" "fetch pattern should be cleared $message" || return
 }
 
@@ -63,7 +62,6 @@ test_worker_startup_failure_clears_git_state() {
 	typeset -g prompt_impure_git_dirty="*"
 	typeset -g prompt_impure_git_last_dirty_check_timestamp=1
 	typeset -g prompt_impure_git_arrows="⇡"
-	typeset -g prompt_impure_git_stash=1
 	typeset -g prompt_impure_git_fetch_pattern="pull|fetch"
 	typeset -g prompt_impure_async_inited=0
 
@@ -96,7 +94,6 @@ test_worker_sync_clears_stale_git_state_before_returning() {
 	typeset -g prompt_impure_git_dirty="*"
 	typeset -g prompt_impure_git_last_dirty_check_timestamp=1
 	typeset -g prompt_impure_git_arrows="⇡"
-	typeset -g prompt_impure_git_stash=1
 	typeset -g prompt_impure_git_fetch_pattern="pull|fetch"
 
 	builtin cd -q "$tmpdir"
@@ -410,7 +407,6 @@ test_callback_failed_recovery_clears_git_state() {
 	typeset -g prompt_impure_git_dirty="*"
 	typeset -g prompt_impure_git_last_dirty_check_timestamp=1
 	typeset -g prompt_impure_git_arrows="⇡"
-	typeset -g prompt_impure_git_stash=1
 	typeset -g prompt_impure_git_fetch_pattern="pull|fetch"
 	typeset -g prompt_impure_async_inited=1
 	local render_called=0
