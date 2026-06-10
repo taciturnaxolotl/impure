@@ -301,14 +301,23 @@ prompt_impure_precmd() {
 
 	# Handle Ctrl+C: install TRAPINT so transient fires on interrupt too.
 	TRAPINT() {
-		# Ctrl+C at the prompt doesn't run precmd, so restore PROMPT directly
-		# if a transient swap is pending, otherwise it stays stuck as ❯.
+		# Restore PROMPT if a previous transient swap is still pending.
 		if [[ -n ${prompt_impure_saved_prompt:-} ]]; then
 			PROMPT=$prompt_impure_saved_prompt
 			RPROMPT=$prompt_impure_saved_rprompt
 			unset prompt_impure_saved_prompt prompt_impure_saved_rprompt
 		fi
-		typeset -g prompt_impure_transient=1
+		# Do the transient swap inline when at the ZLE prompt. We restore PROMPT
+		# immediately after redrawing because ^C doesn't run precmd, so the
+		# normal saved/restore cycle would leave PROMPT stuck as ❯.
+		if zle; then
+			local saved_prompt=$PROMPT saved_rprompt=$RPROMPT
+			PROMPT="%F{$prompt_impure_colors[prompt:success]}${IMPURE_PROMPT_SYMBOL:-❯}%f "
+			RPROMPT=
+			zle .reset-prompt && zle -R
+			PROMPT=$saved_prompt
+			RPROMPT=$saved_rprompt
+		fi
 		return $(( 128 + $1 ))
 	}
 
@@ -347,6 +356,10 @@ prompt_impure_precmd() {
 
 	# Print the preprompt.
 	prompt_impure_preprompt_render "precmd"
+
+	# Enable the leading newline after the first prompt so subsequent prompts
+	# are separated from command output, but the first prompt and ctrl+l are clean.
+	typeset -g prompt_impure_newline=$prompt_newline
 
 	if [[ -n $ZSH_THEME ]]; then
 		print "WARNING: Oh My Zsh themes are enabled (ZSH_THEME='${ZSH_THEME}'). Impure might not be working correctly."
@@ -1156,6 +1169,14 @@ prompt_impure_accept_line() {
 	zle .accept-line
 }
 
+prompt_impure_clear_screen() {
+	# Suppress the leading newline so the first prompt after clear is clean.
+	typeset -g prompt_impure_newline=
+	zle .clear-screen
+	# Restore after redraw so subsequent prompts keep their separator.
+	typeset -g prompt_impure_newline=$prompt_newline
+}
+
 prompt_impure_transient_redraw() {
 	setopt localoptions noshwordsplit
 
@@ -1356,6 +1377,10 @@ prompt_impure_setup() {
 		typeset -g prompt_newline=$'\n%{\r%}'
 	fi
 
+	# Start with no leading newline; set after first precmd so the first
+	# prompt and ctrl+l don't get a blank line above them.
+	typeset -g prompt_impure_newline=
+
 	zmodload zsh/datetime
 	zmodload zsh/zle
 	zmodload zsh/parameter
@@ -1415,6 +1440,11 @@ prompt_impure_setup() {
 	bindkey '^M' prompt_impure_accept_line
 	bindkey '^J' prompt_impure_accept_line
 
+	# Suppress the leading newline after ctrl+l (clear-screen) so the first
+	# prompt after clearing doesn't have a blank line above it.
+	zle -N prompt_impure_clear_screen
+	bindkey '^L' prompt_impure_clear_screen
+
 	# Initialize git globals referenced by PROMPT via prompt subst.
 	typeset -gA prompt_impure_vcs_info
 	typeset -g prompt_impure_git_branch_color=$prompt_impure_colors[git:branch]
@@ -1455,7 +1485,7 @@ prompt_impure_setup() {
 	#   42s pure ❯
 	#
 	# Preprompt line: each %(NV..) section only renders when its psvar is non-empty.
-	PROMPT='${prompt_newline}'
+	PROMPT='${prompt_impure_newline}'
 	PROMPT+='%(13V.%F{$prompt_impure_colors[prompt:ssh]}%m%f .)'
 	PROMPT+='%(24V.%F{$prompt_impure_colors[zmx]}%24v%f .)'
 	prompt_impure_set_path_separator
