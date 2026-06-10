@@ -611,7 +611,7 @@ prompt_impure_async_worker_sync() {
 }
 
 prompt_impure_clear_git_state() {
-	unset prompt_impure_git_dirty prompt_impure_git_staging prompt_impure_git_arrows prompt_impure_git_fetch_pattern
+	unset prompt_impure_git_dirty prompt_impure_git_staging prompt_impure_git_arrows prompt_impure_git_fetch_pattern prompt_impure_git_last_fetch_timestamp
 	typeset -gA prompt_impure_worker_env=()
 	typeset -gA prompt_impure_worker_env_pending=()
 	typeset -gA prompt_impure_vcs_info
@@ -750,6 +750,9 @@ prompt_impure_async_tasks() {
 	# Try gitstatusd first (fast path: single IPC call instead of 6 git forks).
 	if (( ${prompt_impure_gitstatus_inited:-0} )) || prompt_impure_gitstatus_init; then
 		if prompt_impure_gitstatus_query; then
+			# gitstatusd handles status/dirty/arrows synchronously, but we
+			# still need the async worker for git fetch (gitstatusd doesn't fetch).
+			prompt_impure_async_fetch_only
 			return
 		fi
 		# Not in a git repo — clear state and return.
@@ -844,6 +847,31 @@ prompt_impure_async_jj_tasks() {
 	# Always dispatch: jj status can change without cd (e.g. jj commit, jj new).
 	# The async worker handles concurrent job dedup internally.
 	async_job "prompt_impure" prompt_impure_async_jj_status
+}
+
+# When gitstatusd handles status synchronously, we still need the async
+# worker for git fetch (gitstatusd doesn't do network operations).
+prompt_impure_async_fetch_only() {
+	if ! prompt_impure_async_init; then
+		return
+	fi
+
+	# Throttle: skip fetch if last one was recent.
+	local -i interval=${IMPURE_GIT_FETCH_INTERVAL:-60}
+	local -F now=$EPOCHREALTIME
+	if (( now - ${prompt_impure_git_last_fetch_timestamp:-0} < interval )); then
+		return
+	fi
+	typeset -gF prompt_impure_git_last_fetch_timestamp=$now
+
+	# Skip fetch if disabled or in home folder.
+	if (( ${IMPURE_GIT_PULL:-1} )) && [[ $prompt_impure_vcs_info[top] != $HOME ]]; then
+		zstyle -t :prompt:impure:git:fetch only_upstream
+		local only_upstream=$((? == 0))
+		async_job "prompt_impure" prompt_impure_async_git_fetch $only_upstream || return
+	else
+		async_job "prompt_impure" prompt_impure_async_git_arrows || return
+	fi
 }
 
 prompt_impure_async_refresh() {
