@@ -694,9 +694,9 @@ prompt_impure_gitstatus_query() {
 	# Arrows: ahead/behind counts.
 	typeset -g prompt_impure_git_arrows=
 	local arrows=""
-	(( VCS_STATUS_COMMITS_AHEAD )) && arrows+="⇡${VCS_STATUS_COMMITS_AHEAD}"
-	(( VCS_STATUS_COMMITS_BEHIND )) && arrows+="⇣${VCS_STATUS_COMMITS_BEHIND}"
-	prompt_impure_git_arrows="${arrows:-}"
+	(( VCS_STATUS_COMMITS_AHEAD )) && arrows+="${IMPURE_GIT_UP_ARROW:-⇡}${VCS_STATUS_COMMITS_AHEAD} "
+	(( VCS_STATUS_COMMITS_BEHIND )) && arrows+="${IMPURE_GIT_DOWN_ARROW:-⇣}${VCS_STATUS_COMMITS_BEHIND} "
+	prompt_impure_git_arrows="${arrows% }"
 
 	return 0
 }
