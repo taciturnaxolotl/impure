@@ -40,7 +40,8 @@ prompt_impure_human_time_to_var() {
 	(( hours > 0 )) && formatted+="${hours}h "
 	(( minutes > 0 )) && formatted+="${minutes}m "
 	if (( minutes > 0 || hours > 0 || days > 0 )); then
-		formatted+="${(i)seconds}s"
+		local -i isec=$(( seconds ))
+		formatted+="${isec}s"
 	else
 		local -F sec=$seconds
 		formatted+="$(printf '%.2f' $sec)s"
