@@ -1117,8 +1117,10 @@ prompt_impure_reset_vim_prompt_widget() {
 # We wrap accept-line to set a flag, then use zle redisplay in line-finish
 # to rewrite the prompt area before zsh commits it to scrollback.
 prompt_impure_accept_line() {
-	typeset -g prompt_impure_transient=1
 	zle .accept-line
+	# After accept-line, if PENDING > 0 the buffer was incomplete (unclosed
+	# quote, etc.) and zle is waiting for more input. Don't go transient.
+	(( ${PENDING:-0} == 0 )) && typeset -g prompt_impure_transient=1
 }
 
 prompt_impure_transient_redraw() {
@@ -1445,7 +1447,7 @@ prompt_impure_setup() {
 	PROMPT+='%(?.%F{$prompt_impure_colors[prompt:success]}.%F{$prompt_impure_colors[prompt:error]})${prompt_impure_state[prompt]}%f '
 
 	# Indicate continuation prompt by … and use a darker color for it.
-	PROMPT2='%F{$prompt_impure_colors[prompt:continuation]}… %(1_.%_ .%_)%f%(?.%F{$prompt_impure_colors[prompt:success]}.%F{$prompt_impure_colors[prompt:error]})${prompt_impure_state[prompt]}%f '
+	PROMPT2='%F{242}${IMPURE_PROMPT_SYMBOL:-❯}%f '
 
 	# Build right prompt.
 	prompt_impure_build_rprompt
