@@ -656,18 +656,15 @@ prompt_impure_gitstatus_init() {
 	fi
 	[[ -n "$gitstatus_plugin" && -r "$gitstatus_plugin" ]] || return 1
 
-	# Pre-define _gitstatus_plugin_dir so the plugin's typeset line doesn't
-	# break on nix store paths (the :A:h modifier fails in some contexts).
-	typeset -g _gitstatus_plugin_dir="${gitstatus_plugin:h}"
-	# Prevent the plugin from overwriting with a broken value.
+	# Use builtin source to avoid user-defined source() wrappers that may
+	# leak positional parameters ($1 = filename) into the sourced script,
+	# which breaks gitstatus.plugin.zsh's dynamic typeset on line 61.
 	() {
 		emulate -L zsh
 		setopt no_xtrace
-		source "$gitstatus_plugin" 2>/dev/null
+		builtin source "$gitstatus_plugin" 2>/dev/null
 	} || return 1
-	# Ensure the dir is correct regardless of what the plugin did.
-	typeset -g _gitstatus_plugin_dir="${gitstatus_plugin:h}"
-	gitstatus_start IMPURE -s -u -t 2>/dev/null || return 1
+	gitstatus_start -s 1 -u 1 -t 5 IMPURE 2>/dev/null || return 1
 	prompt_impure_gitstatus_inited=1
 	return 0
 }
