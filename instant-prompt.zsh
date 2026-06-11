@@ -9,9 +9,14 @@
 	# Build minimal prompt: path + newline + prompt symbol.
 	# Use %~ to match impure's prompt (shortens $HOME to ~).
 	local dir="${(%):-%~}"
+	# Hardcoded colors matching impure defaults (theme vars not loaded yet).
+	# blue=4 for path, magenta=5 for prompt symbol, 242 for ssh host.
+	local c_blue=$'\e[34m' c_magenta=$'\e[35m' c_gray=$'\e[38;5;242m' c_reset=$'\e[0m'
 	local ssh=
-	[[ -n "$SSH_CLIENT$SSH_TTY$SSH_CONNECTION" ]] && ssh="${(%):-%m} "
-	local minimal="${ssh}${dir}"$'\n'"❯ "
+	if [[ -n "$SSH_CLIENT$SSH_TTY$SSH_CONNECTION" ]]; then
+		ssh="${c_gray}${(%):-%m}${c_reset} "
+	fi
+	local minimal="${c_blue}${dir}${c_reset}"$'\n'"${c_magenta}❯${c_reset} "
 
 	# Print with terminal reset + cursor save (p10k-compatible format).
 	zmodload zsh/terminfo 2>/dev/null
