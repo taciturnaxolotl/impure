@@ -1578,11 +1578,11 @@ prompt_impure_setup() {
 	PROMPT+='%(16V.%F{$prompt_impure_colors[git:dirty]}%16v%f.)'
 	PROMPT+='%(17V. %F{$prompt_impure_colors[git:action]}%17v%f.)'
 	PROMPT+='%(18V. %F{cyan}%18v%f.)'
-	PROMPT+='%(29V. %F{red}%29v%f.)'
 	# Jujutsu: bookmark (grey) + @changeID (cyan) + working changes (grey)
 	PROMPT+='%(25V. %F{$prompt_impure_colors[jj]}%25v%f.)'
 	PROMPT+='%(26V. %F{cyan}@%26v%f.)'
 	PROMPT+='%(27V. %F{$prompt_impure_colors[jj]}%27v%f.)'
+	PROMPT+='%(29V. %F{red}%29v%f.)'
 	PROMPT+='%(22V. %F{$prompt_impure_colors[custom:prefix]}%22v%f.)'
 	PROMPT+='%(23V. %F{$prompt_impure_colors[custom:suffix]}%23v%f.)'
 
