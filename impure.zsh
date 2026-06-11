@@ -1200,7 +1200,7 @@ prompt_impure_clear_screen() {
 }
 
 prompt_impure_ctrl_c() {
-	local prompt_color=$prompt_impure_colors[prompt:success]
+	local prompt_color=$prompt_impure_state[prompt_color]
 
 	# Swap to transient prompt and redraw in place.
 	typeset -g prompt_impure_saved_prompt="$PROMPT"
@@ -1246,8 +1246,7 @@ prompt_impure_transient_redraw() {
 	(( ${prompt_impure_transient:-0} )) || return
 	unset prompt_impure_transient
 
-	local prompt_color
-	prompt_color=$prompt_impure_colors[prompt:success]
+	local prompt_color=$prompt_impure_state[prompt_color]
 
 	# Save full prompt, swap to minimal, redraw.
 	typeset -g prompt_impure_saved_prompt="$PROMPT"
@@ -1300,16 +1299,26 @@ prompt_impure_state_setup() {
 	# Set psvar[13] flag for username display in PROMPT.
 	[[ -n $user_color ]] && psvar[13]=1
 
+	# Track SSH state for prompt color switching.
+	local is_ssh=0
+	[[ -n $ssh_connection ]] && is_ssh=1
+
 	# Check if hostname display is enabled (default: yes).
 	local show_host=1
 	zstyle -T ":prompt:impure:host" show || show_host=0
 
 	typeset -gA prompt_impure_state
 	prompt_impure_state[version]="0.1.0"
+	# Resolve prompt symbol color: yellow on SSH, magenta locally.
+	local prompt_ok_color=$prompt_impure_colors[prompt:success]
+	(( is_ssh )) && prompt_ok_color=$prompt_impure_colors[prompt:ssh]
+
 	prompt_impure_state+=(
-		user_color "$user_color"
-		show_host  "$show_host"
-		prompt     "${IMPURE_PROMPT_SYMBOL:-❯}"
+		user_color    "$user_color"
+		show_host     "$show_host"
+		ssh           "$is_ssh"
+		prompt        "${IMPURE_PROMPT_SYMBOL:-❯}"
+		prompt_color  "$prompt_ok_color"
 	)
 }
 
@@ -1579,8 +1588,8 @@ prompt_impure_setup() {
 
 	# Newline before the prompt symbol.
 	PROMPT+='${prompt_newline}'
-	# Prompt symbol: magenta locally, red on error.
-	PROMPT+='%(?.%F{$prompt_impure_colors[prompt:success]}.%F{$prompt_impure_colors[prompt:error]})${prompt_impure_state[prompt]}%f '
+	# Prompt symbol: yellow on SSH, magenta locally, red on error.
+	PROMPT+='%(?.%F{$prompt_impure_state[prompt_color]}.%F{$prompt_impure_colors[prompt:error]})${prompt_impure_state[prompt]}%f '
 
 	# Indicate continuation prompt by … and use a darker color for it.
 	PROMPT2='%F{242}${IMPURE_PROMPT_SYMBOL:-❯}%f '
