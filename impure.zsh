@@ -575,7 +575,7 @@ prompt_impure_async_jj_status() {
 	local jj_info
 	# Use | as delimiter between bookmarks and change ID for reliable parsing.
 	# Filter out jj/keep/ (auto-generated anonymous branch bookmarks) and strip heads/ prefix.
-	jj_info=$(command jj log --no-graph -r '@' -T 'bookmarks.filter(|b| !b.name().starts_with("jj/keep/")).map(|b| b.name().replace("heads/", "")).join(" ") ++ "|" ++ change_id.shortest() ++ "|" ++ conflicted_files().len()' 2>/dev/null) || return 1
+	jj_info=$(command jj log --no-graph -r '@' -T 'bookmarks.filter(|b| !b.name().starts_with("jj/keep/")).map(|b| b.name().replace("heads/", "")).join(" ") ++ "|" ++ change_id.shortest() ++ "|" ++ self.conflicted_files().len()' 2>/dev/null) || return 1
 
 	# Get working copy status: count changed files via process substitution
 	# to avoid storing the full output in a variable.
