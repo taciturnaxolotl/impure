@@ -318,6 +318,7 @@ prompt_impure_precmd() {
 			local saved_prompt=$PROMPT saved_rprompt=$RPROMPT
 			PROMPT="%F{$prompt_impure_colors[prompt:success]}${IMPURE_PROMPT_SYMBOL:-❯}%f "
 			RPROMPT=
+			unset POSTDISPLAY 2>/dev/null
 			zle .reset-prompt && zle -R
 			PROMPT=$saved_prompt
 			RPROMPT=$saved_rprompt
@@ -1189,7 +1190,9 @@ prompt_impure_accept_line() {
 	# Only set the transient flag for complete lines. In continuation mode
 	# ($CONTEXT == cont, e.g. unclosed quote), don't go transient.
 	[[ $CONTEXT != cont ]] && typeset -g prompt_impure_transient=1
-	zle .accept-line
+	# Call accept-line (not .accept-line) to chain through any wrappers
+	# installed by zsh-autosuggestions or other plugins.
+	zle accept-line
 }
 
 prompt_impure_clear_screen() {
@@ -1214,6 +1217,8 @@ prompt_impure_transient_redraw() {
 	typeset -g prompt_impure_saved_rprompt="$RPROMPT"
 	PROMPT="%F{${prompt_color}}${IMPURE_PROMPT_SYMBOL:-❯}%f "
 	RPROMPT=
+	# Clear any leftover autosuggestion display state.
+	unset POSTDISPLAY 2>/dev/null
 	zle && zle .reset-prompt && zle -R
 }
 
