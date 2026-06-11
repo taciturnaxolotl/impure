@@ -364,7 +364,13 @@ prompt_impure_precmd() {
 
 	# Enable the leading newline after the first prompt so subsequent prompts
 	# are separated from command output, but the first prompt and ctrl+l are clean.
-	typeset -g prompt_impure_newline=$prompt_newline
+	# Skip on the very first precmd (right after instant prompt cleanup) to avoid
+	# a blank line above the initial prompt.
+	if (( ${prompt_impure_first_precmd_done:-0} )); then
+		typeset -g prompt_impure_newline=$prompt_newline
+	else
+		typeset -g prompt_impure_first_precmd_done=1
+	fi
 
 	if [[ -n $ZSH_THEME ]]; then
 		print "WARNING: Oh My Zsh themes are enabled (ZSH_THEME='${ZSH_THEME}'). Impure might not be working correctly."
