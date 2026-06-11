@@ -301,27 +301,17 @@ prompt_impure_precmd() {
 		RPROMPT=$prompt_impure_saved_rprompt
 		unset prompt_impure_saved_prompt prompt_impure_saved_rprompt
 		prompt_impure_build_rprompt
+		# Re-enable zsh-autosuggestions after transient prompt is restored.
+		unset _ZSH_AUTOSUGGEST_DISABLED 2>/dev/null
 	fi
 
-	# Handle Ctrl+C: install TRAPINT so transient fires on interrupt too.
+	# Handle Ctrl+C: install TRAPINT to restore PROMPT if a transient swap
+	# is pending and we're interrupted outside ZLE (e.g. during a command).
 	TRAPINT() {
-		# Restore PROMPT if a previous transient swap is still pending.
 		if [[ -n ${prompt_impure_saved_prompt:-} ]]; then
 			PROMPT=$prompt_impure_saved_prompt
 			RPROMPT=$prompt_impure_saved_rprompt
 			unset prompt_impure_saved_prompt prompt_impure_saved_rprompt
-		fi
-		# Do the transient swap inline when at the ZLE prompt. We restore PROMPT
-		# immediately after redrawing because ^C doesn't run precmd, so the
-		# normal saved/restore cycle would leave PROMPT stuck as ❯.
-		if zle; then
-			local saved_prompt=$PROMPT saved_rprompt=$RPROMPT
-			PROMPT="%F{$prompt_impure_colors[prompt:success]}${IMPURE_PROMPT_SYMBOL:-❯}%f "
-			RPROMPT=
-			unset POSTDISPLAY 2>/dev/null
-			zle .reset-prompt && zle -R
-			PROMPT=$saved_prompt
-			RPROMPT=$saved_rprompt
 		fi
 		return $(( 128 + $1 ))
 	}
@@ -1209,6 +1199,47 @@ prompt_impure_clear_screen() {
 	typeset -g prompt_impure_newline=$prompt_newline
 }
 
+prompt_impure_ctrl_c() {
+	local prompt_color=$prompt_impure_colors[prompt:success]
+
+	# Swap to transient prompt and redraw in place.
+	typeset -g prompt_impure_saved_prompt="$PROMPT"
+	typeset -g prompt_impure_saved_rprompt="$RPROMPT"
+	PROMPT="%F{${prompt_color}}${IMPURE_PROMPT_SYMBOL:-❯}%f "
+	RPROMPT=
+	unset POSTDISPLAY 2>/dev/null
+	BUFFER=
+	zle .reset-prompt
+
+	# Schedule prompt restoration on the next idle ZLE cycle via zle -F.
+	# This fires after send-break completes, drawing a fresh full prompt below.
+	if (( ! ${prompt_impure_restore_fd:-0} )); then
+		sysopen -o cloexec -ru prompt_impure_restore_fd /dev/null 2>/dev/null && \
+			zle -F $prompt_impure_restore_fd prompt_impure_restore_after_break
+	fi
+	typeset -g prompt_impure_must_restore=1
+
+	# Call the original send-break to deliver SIGINT properly.
+	zle .send-break
+}
+
+prompt_impure_restore_after_break() {
+	zle -F $1
+	exec {1}>&-
+	typeset -g prompt_impure_restore_fd=0
+
+	(( ${prompt_impure_must_restore:-0} )) || return
+	typeset -g prompt_impure_must_restore=0
+
+	# Restore full prompt and redraw.
+	if [[ -n ${prompt_impure_saved_prompt:-} ]]; then
+		PROMPT=$prompt_impure_saved_prompt
+		RPROMPT=$prompt_impure_saved_rprompt
+		unset prompt_impure_saved_prompt prompt_impure_saved_rprompt
+	fi
+	zle .reset-prompt
+}
+
 prompt_impure_transient_redraw() {
 	setopt localoptions noshwordsplit
 
@@ -1223,7 +1254,9 @@ prompt_impure_transient_redraw() {
 	typeset -g prompt_impure_saved_rprompt="$RPROMPT"
 	PROMPT="%F{${prompt_color}}${IMPURE_PROMPT_SYMBOL:-❯}%f "
 	RPROMPT=
-	# Clear any leftover autosuggestion display state.
+	# Suppress zsh-autosuggestions during transient redraw so zle -R
+	# doesn't trigger a re-fetch that repopulates POSTDISPLAY.
+	typeset -g _ZSH_AUTOSUGGEST_DISABLED=1
 	unset POSTDISPLAY 2>/dev/null
 	zle && zle .reset-prompt && zle -R
 }
@@ -1463,6 +1496,8 @@ prompt_impure_setup() {
 	zle -N prompt_impure_update_vim_prompt_widget
 	zle -N prompt_impure_reset_vim_prompt_widget
 	zle -N prompt_impure_accept_line
+	zle -N prompt_impure_ctrl_c
+	zle -N prompt_impure_restore_after_break
 	zle -N prompt_impure_transient_redraw
 	if (( $+functions[add-zle-hook-widget] )); then
 		add-zle-hook-widget zle-line-finish prompt_impure_reset_vim_prompt_widget
@@ -1473,6 +1508,7 @@ prompt_impure_setup() {
 	# Bind accept-line to our wrapper so we can set the transient flag.
 	bindkey '^M' prompt_impure_accept_line
 	bindkey '^J' prompt_impure_accept_line
+	bindkey '^C' prompt_impure_ctrl_c
 
 	# Suppress the leading newline after ctrl+l (clear-screen) so the first
 	# prompt after clearing doesn't have a blank line above it.
