@@ -301,13 +301,16 @@ prompt_impure_precmd() {
 		RPROMPT=$prompt_impure_saved_rprompt
 		unset prompt_impure_saved_prompt prompt_impure_saved_rprompt
 		prompt_impure_build_rprompt
-		# Re-enable zsh-autosuggestions after transient prompt is restored.
-		unset _ZSH_AUTOSUGGEST_DISABLED 2>/dev/null
 	fi
 
-	# Handle Ctrl+C: install TRAPINT to restore PROMPT if a transient swap
-	# is pending and we're interrupted outside ZLE (e.g. during a command).
+	# Ctrl+C is delivered as SIGINT and handled here, not through a ZLE widget
+	# (zle is not reentrant at this point, so we cannot touch POSTDISPLAY or
+	# call zle). The autosuggestion is drawn to the right of the cursor and
+	# zsh's interrupt teardown doesn't erase it, so emit a clear-to-end-of-
+	# screen to wipe the dangling suggestion before the next prompt. Restore
+	# PROMPT too if a transient swap was pending so it doesn't stay stuck as ❯.
 	TRAPINT() {
+		print -rn -- $'\e[J'
 		if [[ -n ${prompt_impure_saved_prompt:-} ]]; then
 			PROMPT=$prompt_impure_saved_prompt
 			RPROMPT=$prompt_impure_saved_rprompt
@@ -1201,56 +1204,9 @@ prompt_impure_clear_screen() {
 	typeset -g prompt_impure_newline=$prompt_newline
 }
 
-prompt_impure_ctrl_c() {
-	local prompt_color=$prompt_impure_state[prompt_color]
-
-	# Swap to transient prompt and redraw in place.
-	typeset -g prompt_impure_saved_prompt="$PROMPT"
-	typeset -g prompt_impure_saved_rprompt="$RPROMPT"
-	PROMPT="%F{${prompt_color}}${IMPURE_PROMPT_SYMBOL:-❯}%f "
-	RPROMPT=
-	# Disable suggestions across the redraw so an in-flight async fetch can't
-	# repopulate POSTDISPLAY after we clear it. Re-enabled in the restore
-	# callback below. Clear (not unset) POSTDISPLAY per zsh-autosuggestions.
-	typeset -g _ZSH_AUTOSUGGEST_DISABLED=1
-	POSTDISPLAY=
-	BUFFER=
-	# Force a redisplay (not just reset-prompt) so the cleared suggestion is
-	# actually flushed to the screen before send-break tears the line down.
-	zle .reset-prompt && zle -R
-
-	# Schedule prompt restoration on the next idle ZLE cycle via zle -F.
-	# This fires after send-break completes, drawing a fresh full prompt below.
-	if (( ! ${prompt_impure_restore_fd:-0} )); then
-		sysopen -o cloexec -ru prompt_impure_restore_fd /dev/null 2>/dev/null && \
-			zle -F $prompt_impure_restore_fd prompt_impure_restore_after_break
-	fi
-	typeset -g prompt_impure_must_restore=1
-
-	# Call the original send-break to deliver SIGINT properly.
-	zle .send-break
-}
-
-prompt_impure_restore_after_break() {
-	zle -F $1
-	exec {1}>&-
-	typeset -g prompt_impure_restore_fd=0
-
-	(( ${prompt_impure_must_restore:-0} )) || return
-	typeset -g prompt_impure_must_restore=0
-
-	# Restore full prompt and redraw.
-	if [[ -n ${prompt_impure_saved_prompt:-} ]]; then
-		PROMPT=$prompt_impure_saved_prompt
-		RPROMPT=$prompt_impure_saved_rprompt
-		unset prompt_impure_saved_prompt prompt_impure_saved_rprompt
-	fi
-	# Re-enable autosuggestions (disabled during transient redraw).
-	unset _ZSH_AUTOSUGGEST_DISABLED 2>/dev/null
-
-	zle .reset-prompt
-}
-
+# Transient prompt: after Enter, collapse the two-line prompt to a bare ❯.
+# Runs from zle-line-finish. Saves the full prompt so precmd can restore it,
+# since PROMPT is a static template built once at setup, not rebuilt each cycle.
 prompt_impure_transient_redraw() {
 	setopt localoptions noshwordsplit
 
@@ -1258,14 +1214,18 @@ prompt_impure_transient_redraw() {
 	unset prompt_impure_transient
 
 	local prompt_color=$prompt_impure_state[prompt_color]
-
-	# Save full prompt, swap to minimal, redraw.
 	typeset -g prompt_impure_saved_prompt="$PROMPT"
 	typeset -g prompt_impure_saved_rprompt="$RPROMPT"
 	PROMPT="%F{${prompt_color}}${IMPURE_PROMPT_SYMBOL:-❯}%f "
 	RPROMPT=
-	POSTDISPLAY=
-	zle && zle .reset-prompt && zle -R
+	# The accept-line widget is registered in ZSH_AUTOSUGGEST_CLEAR_WIDGETS so
+	# the plugin already wipes the suggestion; clearing POSTDISPLAY here too is
+	# a harmless belt. Guarded since POSTDISPLAY is only writable inside zle.
+	if zle; then
+		POSTDISPLAY=
+		zle .reset-prompt
+		zle -R
+	fi
 }
 
 
@@ -1513,31 +1473,26 @@ prompt_impure_setup() {
 	zle -N prompt_impure_update_vim_prompt_widget
 	zle -N prompt_impure_reset_vim_prompt_widget
 	zle -N prompt_impure_accept_line
-	zle -N prompt_impure_ctrl_c
-	zle -N prompt_impure_restore_after_break
 	zle -N prompt_impure_transient_redraw
 	# zsh-autosuggestions rebinds widgets each precmd and would otherwise wrap
 	# our accept-line widget as a generic buffer-modifier, repainting the
-	# suggestion back after our transient redraw. Mark it as a "clear" widget
-	# so the plugin wipes POSTDISPLAY when it runs, and ignore our ctrl+c
-	# widget entirely (it manages POSTDISPLAY itself). Defined defensively so
-	# they apply whether autosuggestions loads before or after Impure.
+	# suggestion back after our transient redraw. Register it as a "clear"
+	# widget so the plugin wipes the suggestion when accepting the line. Defined
+	# defensively so it applies whether autosuggestions loads before or after
+	# Impure. (Ctrl+C is handled by TRAPINT, not a widget.)
 	typeset -ga ZSH_AUTOSUGGEST_CLEAR_WIDGETS
 	(( ${ZSH_AUTOSUGGEST_CLEAR_WIDGETS[(I)prompt_impure_accept_line]} )) ||
 		ZSH_AUTOSUGGEST_CLEAR_WIDGETS+=(prompt_impure_accept_line)
-	typeset -ga ZSH_AUTOSUGGEST_IGNORE_WIDGETS
-	(( ${ZSH_AUTOSUGGEST_IGNORE_WIDGETS[(I)prompt_impure_ctrl_c]} )) ||
-		ZSH_AUTOSUGGEST_IGNORE_WIDGETS+=(prompt_impure_ctrl_c)
 	if (( $+functions[add-zle-hook-widget] )); then
 		add-zle-hook-widget zle-line-finish prompt_impure_reset_vim_prompt_widget
 		add-zle-hook-widget zle-keymap-select prompt_impure_update_vim_prompt_widget
 		add-zle-hook-widget zle-line-finish prompt_impure_transient_redraw
 	fi
 
-	# Bind accept-line to our wrapper so we can set the transient flag.
+	# Bind accept-line to our wrapper so we can drive the transient prompt
+	# collapse. Ctrl+C is handled by TRAPINT (see prompt_impure_precmd).
 	bindkey '^M' prompt_impure_accept_line
 	bindkey '^J' prompt_impure_accept_line
-	bindkey '^C' prompt_impure_ctrl_c
 
 	# Suppress the leading newline after ctrl+l (clear-screen) so the first
 	# prompt after clearing doesn't have a blank line above it.

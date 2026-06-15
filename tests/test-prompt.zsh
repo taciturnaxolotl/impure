@@ -147,7 +147,8 @@ test_transient_flag() {
     local saved_prompt="$PROMPT"
     local saved_rprompt="$RPROMPT"
 
-    # Manually call the redraw (outside zle context, so skip zle calls)
+    # Call the transient redraw (the zle redisplay calls inside it no-op
+    # outside a zle context; the prompt/var swaps still run).
     prompt_impure_transient_redraw 2>/dev/null
 
     assert_eq "PROMPT swapped to minimal" "%F{${prompt_impure_colors[prompt:success]}}❯%f " "$PROMPT"
