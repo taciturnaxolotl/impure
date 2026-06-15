@@ -1187,7 +1187,9 @@ prompt_impure_accept_line() {
 	# ($CONTEXT == cont, e.g. unclosed quote), don't go transient.
 	[[ $CONTEXT != cont ]] && typeset -g prompt_impure_transient=1
 	# Call accept-line (not .accept-line) to chain through any wrappers
-	# installed by zsh-autosuggestions or other plugins.
+	# installed by zsh-autosuggestions or other plugins. This widget is
+	# registered in ZSH_AUTOSUGGEST_CLEAR_WIDGETS (see setup), so the plugin
+	# wipes any visible suggestion as part of accepting the line.
 	zle accept-line
 }
 
@@ -1207,9 +1209,15 @@ prompt_impure_ctrl_c() {
 	typeset -g prompt_impure_saved_rprompt="$RPROMPT"
 	PROMPT="%F{${prompt_color}}${IMPURE_PROMPT_SYMBOL:-❯}%f "
 	RPROMPT=
-	unset POSTDISPLAY 2>/dev/null
+	# Disable suggestions across the redraw so an in-flight async fetch can't
+	# repopulate POSTDISPLAY after we clear it. Re-enabled in the restore
+	# callback below. Clear (not unset) POSTDISPLAY per zsh-autosuggestions.
+	typeset -g _ZSH_AUTOSUGGEST_DISABLED=1
+	POSTDISPLAY=
 	BUFFER=
-	zle .reset-prompt
+	# Force a redisplay (not just reset-prompt) so the cleared suggestion is
+	# actually flushed to the screen before send-break tears the line down.
+	zle .reset-prompt && zle -R
 
 	# Schedule prompt restoration on the next idle ZLE cycle via zle -F.
 	# This fires after send-break completes, drawing a fresh full prompt below.
@@ -1256,10 +1264,7 @@ prompt_impure_transient_redraw() {
 	typeset -g prompt_impure_saved_rprompt="$RPROMPT"
 	PROMPT="%F{${prompt_color}}${IMPURE_PROMPT_SYMBOL:-❯}%f "
 	RPROMPT=
-	# Suppress zsh-autosuggestions during transient redraw so zle -R
-	# doesn't trigger a re-fetch that repopulates POSTDISPLAY.
-	typeset -g _ZSH_AUTOSUGGEST_DISABLED=1
-	unset POSTDISPLAY 2>/dev/null
+	POSTDISPLAY=
 	zle && zle .reset-prompt && zle -R
 }
 
@@ -1511,6 +1516,18 @@ prompt_impure_setup() {
 	zle -N prompt_impure_ctrl_c
 	zle -N prompt_impure_restore_after_break
 	zle -N prompt_impure_transient_redraw
+	# zsh-autosuggestions rebinds widgets each precmd and would otherwise wrap
+	# our accept-line widget as a generic buffer-modifier, repainting the
+	# suggestion back after our transient redraw. Mark it as a "clear" widget
+	# so the plugin wipes POSTDISPLAY when it runs, and ignore our ctrl+c
+	# widget entirely (it manages POSTDISPLAY itself). Defined defensively so
+	# they apply whether autosuggestions loads before or after Impure.
+	typeset -ga ZSH_AUTOSUGGEST_CLEAR_WIDGETS
+	(( ${ZSH_AUTOSUGGEST_CLEAR_WIDGETS[(I)prompt_impure_accept_line]} )) ||
+		ZSH_AUTOSUGGEST_CLEAR_WIDGETS+=(prompt_impure_accept_line)
+	typeset -ga ZSH_AUTOSUGGEST_IGNORE_WIDGETS
+	(( ${ZSH_AUTOSUGGEST_IGNORE_WIDGETS[(I)prompt_impure_ctrl_c]} )) ||
+		ZSH_AUTOSUGGEST_IGNORE_WIDGETS+=(prompt_impure_ctrl_c)
 	if (( $+functions[add-zle-hook-widget] )); then
 		add-zle-hook-widget zle-line-finish prompt_impure_reset_vim_prompt_widget
 		add-zle-hook-widget zle-keymap-select prompt_impure_update_vim_prompt_widget
