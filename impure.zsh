@@ -1237,6 +1237,9 @@ prompt_impure_restore_after_break() {
 		RPROMPT=$prompt_impure_saved_rprompt
 		unset prompt_impure_saved_prompt prompt_impure_saved_rprompt
 	fi
+	# Re-enable autosuggestions (disabled during transient redraw).
+	unset _ZSH_AUTOSUGGEST_DISABLED 2>/dev/null
+
 	zle .reset-prompt
 }
 
