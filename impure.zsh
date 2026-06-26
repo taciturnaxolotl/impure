@@ -752,6 +752,12 @@ prompt_impure_async_init() {
 	async_worker_eval "prompt_impure" prompt_impure_async_renice
 }
 
+# Stop the async worker on shell exit to prevent the zpty from holding
+# the PTY open (e.g. causing terminal multiplexers to hang on detach).
+prompt_impure_zshexit() {
+	async_stop_worker prompt_impure 2>/dev/null
+}
+
 prompt_impure_async_tasks() {
 	setopt localoptions noshwordsplit
 
@@ -1466,6 +1472,7 @@ prompt_impure_setup() {
 
 	add-zsh-hook precmd prompt_impure_precmd
 	add-zsh-hook preexec prompt_impure_preexec
+	add-zsh-hook zshexit prompt_impure_zshexit
 
 	prompt_impure_state_setup
 
