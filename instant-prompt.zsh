@@ -43,7 +43,18 @@
 	{ : > "$IMPURE_IP_OUTPUT_FILE" } 2>/dev/null || return
 	local fd_null
 	sysopen -ru fd_null /dev/null 2>/dev/null || return
-	exec {IMPURE_IP_FD_0}<&0 {IMPURE_IP_FD_1}>&1 {IMPURE_IP_FD_2}>&2 \
-		0<&$fd_null 1>"$IMPURE_IP_OUTPUT_FILE"
+	# Save the terminal on close-on-exec fds. `exec {fd}>&N` dups are NOT
+	# close-on-exec, so any program spawned during init (e.g. a daemon started
+	# from .zshrc, like a syntax-highlighter or prompt helper) inherits these
+	# tty fds and pins the terminal open. A held-open PTY slave never signals
+	# EOF, which wedges terminal multiplexers (tmux, zmx) when the shell exits.
+	# Reopening $TTY with -o cloexec makes the saved fds auto-close on exec
+	# while staying valid inside this shell for the restore in precmd cleanup.
+	if ! sysopen -o cloexec -rw -u IMPURE_IP_FD_0 $TTY 2>/dev/null \
+		|| ! sysopen -o cloexec -rw -u IMPURE_IP_FD_1 $TTY 2>/dev/null \
+		|| ! sysopen -o cloexec -rw -u IMPURE_IP_FD_2 $TTY 2>/dev/null; then
+		return
+	fi
+	exec 0<&$fd_null 1>"$IMPURE_IP_OUTPUT_FILE"
 	exec 2>&1 {fd_null}>&-
 }
