@@ -302,11 +302,14 @@ prompt_impure_precmd() {
 		return $(( 128 + $1 ))
 	}
 
-	# Perform async Git dirty check and fetch.
-	prompt_impure_async_tasks
-
-	# Perform async Jujutsu status check.
+	# Perform async Jujutsu status check, then the Git dirty check and fetch.
+	# jj goes first because it flushes the worker on a directory change, and
+	# `async_flush_jobs` drains the zpty buffer. Flushing after Git has queued
+	# its worker-env sync can swallow the reply, leaving
+	# `prompt_impure_worker_env_pending` set forever and wedging Git status for
+	# the rest of the session.
 	prompt_impure_async_jj_tasks
+	prompt_impure_async_tasks
 
 	# Check if we should display the virtual env (psvar[21]).
 	psvar[21]=
@@ -781,7 +784,16 @@ prompt_impure_async_tasks() {
 	if [[ $PWD != ${prompt_impure_worker_env[pwd]-} ||
 		$cur_git_dir != ${prompt_impure_worker_env[git_dir]-} ||
 		$cur_git_work_tree != ${prompt_impure_worker_env[git_work_tree]-} ]]; then
-		(( ${#prompt_impure_worker_env_pending} )) && return
+		if (( ${#prompt_impure_worker_env_pending} )); then
+			# A sync normally answers within milliseconds, so one surviving a
+			# whole precmd means its reply was lost — `async_flush_jobs` drains
+			# the zpty buffer and can swallow it. Re-issue on the second sighting
+			# instead of blocking Git status for the rest of the session.
+			if (( ! ${prompt_impure_worker_env_pending[stale]:-0} )); then
+				prompt_impure_worker_env_pending[stale]=1
+				return
+			fi
+		fi
 		prompt_impure_clear_git_state
 		async_flush_jobs "prompt_impure"
 		typeset -gi prompt_impure_worker_sync_token
