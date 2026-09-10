@@ -286,22 +286,6 @@ prompt_impure_precmd() {
 		prompt_impure_build_rprompt
 	fi
 
-	# Ctrl+C is delivered as SIGINT and handled here, not through a ZLE widget
-	# (zle is not reentrant at this point, so we cannot touch POSTDISPLAY or
-	# call zle). The autosuggestion is drawn to the right of the cursor and
-	# zsh's interrupt teardown doesn't erase it, so emit a clear-to-end-of-
-	# screen to wipe the dangling suggestion before the next prompt. Restore
-	# PROMPT too if a transient swap was pending so it doesn't stay stuck as ❯.
-	TRAPINT() {
-		print -rn -- $'\e[J'
-		if [[ -n ${prompt_impure_saved_prompt:-} ]]; then
-			PROMPT=$prompt_impure_saved_prompt
-			RPROMPT=$prompt_impure_saved_rprompt
-			unset prompt_impure_saved_prompt prompt_impure_saved_rprompt
-		fi
-		return $(( 128 + $1 ))
-	}
-
 	# Perform async Jujutsu status check, then the Git dirty check and fetch.
 	# jj goes first because it flushes the worker on a directory change, and
 	# `async_flush_jobs` drains the zpty buffer. Flushing after Git has queued
@@ -1456,6 +1440,22 @@ prompt_impure_setup() {
 	add-zsh-hook precmd prompt_impure_precmd
 	add-zsh-hook preexec prompt_impure_preexec
 	add-zsh-hook zshexit prompt_impure_zshexit
+
+	# Ctrl+C is delivered as SIGINT and handled here, not through a ZLE widget
+	# (zle is not reentrant at this point, so we cannot touch POSTDISPLAY or
+	# call zle). The autosuggestion is drawn to the right of the cursor and
+	# zsh's interrupt teardown doesn't erase it, so emit a clear-to-end-of-
+	# screen to wipe the dangling suggestion before the next prompt. Restore
+	# PROMPT too if a transient swap was pending so it doesn't stay stuck as ❯.
+	TRAPINT() {
+		print -rn -- $'\e[J'
+		if [[ -n ${prompt_impure_saved_prompt:-} ]]; then
+			PROMPT=$prompt_impure_saved_prompt
+			RPROMPT=$prompt_impure_saved_rprompt
+			unset prompt_impure_saved_prompt prompt_impure_saved_rprompt
+		fi
+		return $(( 128 + $1 ))
+	}
 
 	prompt_impure_state_setup
 
