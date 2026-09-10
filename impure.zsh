@@ -763,8 +763,11 @@ prompt_impure_async_tasks() {
 
 	# If inside a jj repo, skip git entirely (jj takes precedence). Cache the
 	# result per directory so we only walk the path on an actual `cd`, keeping
-	# the synchronous precmd path off the filesystem in the common case.
-	if [[ $PWD != ${prompt_impure_jj_repo_check_pwd:-} ]]; then
+	# the synchronous precmd path off the filesystem in the common case. A repo
+	# can also appear under our feet (`jj git init` right here), so a cached
+	# "no" is re-checked with a single stat rather than a full walk.
+	if [[ $PWD != ${prompt_impure_jj_repo_check_pwd:-} ]] ||
+		{ (( ! ${prompt_impure_jj_repo_check:-0} )) && [[ -d $PWD/.jj ]] }; then
 		typeset -g prompt_impure_jj_repo_check_pwd=$PWD
 		if prompt_impure_in_jj_repo; then
 			typeset -g prompt_impure_jj_repo_check=1
