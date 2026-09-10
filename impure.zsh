@@ -135,33 +135,16 @@ prompt_impure_set_colors() {
 prompt_impure_set_path_separator() {
 	local path_color=$prompt_impure_colors[path]
 
-	typeset -g prompt_impure_path_segment="%F{${path_color}}%~%f"
-
 	if zstyle -t ':prompt:impure:path:separator' dim; then
-		typeset -g prompt_impure_path_separator_dimmed=1
+		# Dim the separators with parameter expansion rather than a command
+		# substitution: escape literal %, swap every / for the dimmed one, then
+		# restore a leading / at full brightness. PROMPT runs this through
+		# ${(e)...}, so a redraw costs no fork.
+		typeset -g prompt_impure_path_sep_dim=$'%{\e[2m%}/%{\e[22m%}'
+		typeset -g prompt_impure_path_segment='%F{$prompt_impure_colors[path]}${${${${(%):-%~}//\%/%%}//\//$prompt_impure_path_sep_dim}/#$prompt_impure_path_sep_dim//}%f'
 	else
-		typeset -g prompt_impure_path_separator_dimmed=
+		typeset -g prompt_impure_path_segment="%F{${path_color}}%~%f"
 	fi
-}
-
-prompt_impure_render_dimmed_path() {
-	setopt localoptions noshwordsplit
-
-	# This runs from PROMPT_SUBST so directory changes followed by reset-prompt redraw correctly without precmd.
-	local current_path=${1:-${(%):-%~}}
-	current_path=${current_path//\%/%%}
-
-	local separator=$'%{\e[2m%}/%{\e[22m%}'
-	# Keep the leading / on absolute paths at full brightness.
-	local prefix=
-	if [[ $current_path == /* ]]; then
-		prefix=/
-		current_path=${current_path:1}
-	fi
-
-	local path_color=$prompt_impure_colors[path]
-
-	print -n -r -- "%F{${path_color}}${prefix}${current_path//\//$separator}%f"
 }
 
 prompt_impure_preprompt_render() {
@@ -1383,7 +1366,8 @@ prompt_impure_preview() {
 
 	local path_sample="%F{$c[path]}~/dev/impure%f"
 	if zstyle -t ':prompt:impure:path:separator' dim; then
-		path_sample=$(prompt_impure_render_dimmed_path '~/dev/impure')
+		local sep=$'%{\e[2m%}/%{\e[22m%}'
+		path_sample="%F{$c[path]}${${:-~/dev/impure}//\//$sep}%f"
 	fi
 
 	local host_sample=''
@@ -1559,7 +1543,7 @@ prompt_impure_setup() {
 	PROMPT+='%(13V.%F{$prompt_impure_colors[prompt:ssh]}%m%f .)'
 	PROMPT+='%(24V.%F{$prompt_impure_colors[zmx]}%24v%f .)'
 	prompt_impure_set_path_separator
-	PROMPT+='${${prompt_impure_path_separator_dimmed:+$(prompt_impure_render_dimmed_path)}:-${prompt_impure_path_segment}}'
+	PROMPT+='${(e)prompt_impure_path_segment}'
 	# Git: branch (or detached HEAD hash) + staging + dirty + conflicted + action + arrows
 	PROMPT+='%(14V. %F{${prompt_impure_git_branch_color}}%14v%f.)'
 	PROMPT+='%(28V. %F{$prompt_impure_colors[git:branch]}%28v%f.)'
