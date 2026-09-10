@@ -965,9 +965,13 @@ prompt_impure_async_callback() {
 		return
 	fi
 
+	# Drop payloads that belong to a previous working directory, but keep going:
+	# returning here would strand a render another job in the same batch already
+	# requested, leaving the prompt a cycle behind (jj status is the usual
+	# victim, since it renders while a git job is still queued behind it).
 	case $job in
 		prompt_impure_async_vcs_info|prompt_impure_async_git_aliases|prompt_impure_async_git_dirty|prompt_impure_async_git_fetch|prompt_impure_async_git_arrows)
-			[[ ${prompt_impure_worker_env[pwd]-} == $PWD ]] || return
+			[[ ${prompt_impure_worker_env[pwd]-} == $PWD ]] || job='[stale]'
 			;;
 	esac
 
