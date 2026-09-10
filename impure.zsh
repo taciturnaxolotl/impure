@@ -547,32 +547,12 @@ prompt_impure_async_jj_status() {
 	# Skip unless inside a jj repo.
 	prompt_impure_in_jj_repo || return 1
 
-	# Get bookmark and change ID in one call.
-	local jj_info
-	# Use | as delimiter between bookmarks and change ID for reliable parsing.
-	# Filter out jj/keep/ (auto-generated anonymous branch bookmarks) and strip heads/ prefix.
-	jj_info=$(command jj log --no-graph -r '@' -T 'bookmarks.filter(|b| !b.name().starts_with("jj/keep/")).map(|b| b.name().replace("heads/", "")).join(" ") ++ "|" ++ change_id.shortest() ++ "|" ++ self.conflicted_files().len()' 2>/dev/null) || return 1
-
-	# Get working copy status: count changed files via process substitution
-	# to avoid storing the full output in a variable.
-	local count=0
-	local in_changes=0
-	local line
-	while IFS= read -r line; do
-		if [[ $line == "Working copy changes:" ]]; then
-			in_changes=1
-			continue
-		fi
-		(( in_changes )) || continue
-		[[ -z $line || $line == "Working copy"* || $line == "Parent commit"* ]] && break
-		(( count++ ))
-	done < <(command jj status --color=never 2>/dev/null)
-
-	local working_changes=""
-	(( count > 0 )) && working_changes=" ~${count}"
-
-	# Output: bookmarks|changeid|conflicted_count working_changes
-	print -r -- "${jj_info}${working_changes}"
+	# One `jj log` carries everything the prompt needs, so a prompt costs a
+	# single jj process and a single working-copy snapshot. Fields are separated
+	# by | for reliable parsing in the callback; the working-copy file count is
+	# appended as " ~N" and omitted when the working copy is clean.
+	# jj/keep/ bookmarks are auto-generated anonymous branches, and heads/ is noise.
+	command jj log --no-graph -r '@' -T 'bookmarks.filter(|b| !b.name().starts_with("jj/keep/")).map(|b| b.name().replace("heads/", "")).join(" ") ++ "|" ++ change_id.shortest() ++ "|" ++ self.conflicted_files().len() ++ if(diff.files().len() > 0, " ~" ++ diff.files().len(), "")' 2>/dev/null
 }
 
 # Try to lower the priority of the worker so that disk heavy operations
