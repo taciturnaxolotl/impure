@@ -18,7 +18,7 @@ The canonical repo for this is hosted on tangled over at [`dunkirk.sh/impure`](h
   working tree is dirty.
 - **Jujutsu support.** Inside a `jj` repo the prompt shows bookmarks, the short
   change ID (in cyan), and a working-copy change count. `jj` takes precedence
-  over git when both are present.
+  over git when both are present, unless jj integration is turned off.
 - **nix-shell and virtualenv.** The active environment name is shown on the
   right prompt.
 - **zmx sessions.** When `$ZMX_SESSION` is set the tag is shown in the preprompt.
@@ -28,10 +28,6 @@ The canonical repo for this is hosted on tangled over at [`dunkirk.sh/impure`](h
   and suffix segments.
 - **Exec time, SSH/container detection, VI-mode indicator, suspended-jobs
   marker** — all carried over from Pure.
-- **Bracketed paste mode.** Enabled automatically to prevent accidental execution
-  of pasted text.
-- **EOL marker.** Commands that don't print a trailing newline show a `%` marker
-  so output doesn't visually merge with the next prompt.
 
 Requires Git 2.15.2+ and ZSH 5.8+ (for instant prompt). `jujutsu` is optional
 and only needed for jj status.
@@ -123,13 +119,12 @@ methods above for the full experience.
 | ------------------------------ | ------- | ------------------------------------------------------------- |
 | `IMPURE_CMD_MAX_EXEC_TIME`     | `3`     | Seconds before a command's exec time is shown.                |
 | `IMPURE_GIT_PULL`              | `1`     | Set to `0` to disable the background `git fetch`.             |
+| `IMPURE_GIT_FETCH_INTERVAL`    | `60`    | Minimum seconds between background fetches of a repository.   |
 | `IMPURE_GIT_UNTRACKED_DIRTY`   | `1`     | Set to `0` to ignore untracked files when checking dirtiness. |
-| `IMPURE_GIT_DELAY_DIRTY_CHECK` | `1800`  | Seconds to cache a slow dirty check before re-running.        |
 | `IMPURE_PROMPT_SYMBOL`         | `❯`     | The prompt symbol.                                            |
 | `IMPURE_PROMPT_VICMD_SYMBOL`   | `❮`     | The prompt symbol in VI command mode.                         |
 | `IMPURE_GIT_UP_ARROW`          | `⇡`     | Symbol for unpushed commits.                                  |
 | `IMPURE_GIT_DOWN_ARROW`        | `⇣`     | Symbol for unpulled commits.                                  |
-| `IMPURE_GIT_STASH_SYMBOL`      | `≡`     | Symbol shown when stashes exist.                              |
 | `IMPURE_SUSPENDED_JOBS_SYMBOL` | `✦`     | Symbol shown when jobs are suspended.                         |
 
 The prompt also reacts to these external variables when set:
@@ -146,7 +141,6 @@ zstyle ':prompt:impure:git'                 show no   # disable git integration
 zstyle ':prompt:impure:jj'                  show no   # disable jujutsu integration
 zstyle ':prompt:impure:host'                show no   # hide hostname
 zstyle ':prompt:impure:title'               show no   # stop managing the terminal title
-zstyle ':prompt:impure:git:stash'           show yes  # show stash indicator
 zstyle ':prompt:impure:git:fetch'   only_upstream yes # only fetch the current branch's upstream
 zstyle ':prompt:impure:environment:nix-shell'  show no
 zstyle ':prompt:impure:environment:virtualenv' show no
@@ -164,11 +158,10 @@ zstyle ':prompt:impure:git:branch' color 242
 zstyle ':prompt:impure:prompt:success' color magenta
 ```
 
-Available color keys: `path`, `git:branch`,
-`git:branch:cached`, `git:dirty`, `git:action`, `git:arrow`, `git:stash`, `jj`,
-`host`, `user`, `user:root`, `zmx`, `nix-shell`, `virtualenv`,
-`execution_time`, `suspended_jobs`, `custom:prefix`, `custom:suffix`,
-`prompt:success`, `prompt:error`, `prompt:ssh`, `prompt:continuation`.
+Available color keys: `path`, `git:branch`, `git:dirty`, `git:action`,
+`git:arrow`, `jj`, `zmx`, `nix-shell`, `execution_time`, `suspended_jobs`,
+`custom:prefix`, `custom:suffix`, `prompt:success`, `prompt:error`,
+`prompt:ssh` (also the hostname color), `prompt:continuation`.
 
 ### Custom segments
 
@@ -184,8 +177,8 @@ prompt_impure_precustom() {
 
 ## Preview
 
-Run `prompt_impure_preview` after loading the prompt to see every segment and
-color rendered at once.
+Run `prompt_impure_preview` after loading the prompt to render the real prompt
+with every segment filled in.
 
 ## Tests
 

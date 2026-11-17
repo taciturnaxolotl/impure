@@ -4,7 +4,10 @@ set -euo pipefail
 
 cd -- "${0:A:h}/.."
 
+# Load the prompt as an interactive shell would, without errexit/nounset.
+set +eu
 source ./impure.zsh >/dev/null 2>&1
+set -eu
 
 prompt_impure_preprompt_render() {
 	:

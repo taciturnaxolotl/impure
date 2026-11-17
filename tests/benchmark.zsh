@@ -94,9 +94,6 @@ print
 _bench "prompt_impure_set_colors" $iters \
 	'prompt_impure_set_colors'
 
-_bench "prompt_impure_set_path_separator" $iters \
-	'prompt_impure_set_path_separator'
-
 _bench "prompt_impure_preprompt_render (precmd)" $iters \
 	'prompt_impure_preprompt_render precmd'
 

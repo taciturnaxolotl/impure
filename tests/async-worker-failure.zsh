@@ -62,7 +62,7 @@ test_worker_startup_failure_clears_git_state() {
 	typeset -g prompt_impure_git_fetch_pattern="pull|fetch"
 	typeset -g prompt_impure_async_inited=0
 
-	prompt_impure_async_tasks || :
+	prompt_impure_async_git_tasks || :
 
 	assert_git_state_empty "when worker fails to start" || return
 
@@ -87,7 +87,7 @@ test_leaving_working_tree_clears_stale_git_state() {
 
 	builtin cd -q "$tmpdir"
 
-	prompt_impure_async_tasks || :
+	prompt_impure_async_git_tasks || :
 
 	builtin cd -q "$saved_pwd"
 	zf_rm -rf -- "$saved_pwd/.ai-temporary"
@@ -114,7 +114,7 @@ test_worker_sync_is_assumed_and_jobs_queue_immediately() {
 	typeset -gA prompt_impure_worker_env=()
 	typeset -gA prompt_impure_vcs_info=(branch "" top "" action "" pwd "")
 
-	prompt_impure_async_tasks || :
+	prompt_impure_async_git_tasks || :
 
 	assert_equal "$PWD" "${prompt_impure_worker_env[pwd]-}" "worker sync should be recorded when sent, not when answered" || return
 	assert_equal 1 $flush_calls "old jobs should be flushed before the worker moves" || return
@@ -124,7 +124,7 @@ test_worker_sync_is_assumed_and_jobs_queue_immediately() {
 	# A later prompt in the same directory must not flush or resync, and a
 	# reply that never arrives (swallowed by a flush) must not matter.
 	queued=()
-	prompt_impure_async_tasks || :
+	prompt_impure_async_git_tasks || :
 
 	assert_equal 1 $flush_calls "an unchanged directory should not flush the worker" || return
 	assert_equal 1 $eval_calls "an unchanged directory should not resync the worker" || return
@@ -159,7 +159,7 @@ test_worker_sync_cd_failure_forgets_sync() {
 	builtin cd -q "$tmpdir"
 	zf_rm -rf -- "$tmpdir"
 
-	prompt_impure_async_tasks || :
+	prompt_impure_async_git_tasks || :
 
 	local sync_output
 	sync_output=$("${(@)worker_eval_command}" 2>&1)
@@ -200,7 +200,7 @@ test_worker_sync_enqueue_failure_is_not_recorded() {
 	typeset -gA prompt_impure_worker_env=()
 	typeset -gA prompt_impure_vcs_info=(branch main top /tmp/repo action "" pwd /tmp/repo)
 
-	prompt_impure_async_tasks || :
+	prompt_impure_async_git_tasks || :
 
 	assert_empty "${prompt_impure_worker_env[pwd]-}" "a sync that never reached the worker should not be recorded" || return
 	assert_equal 0 $job_called "no git job should run in an unsynced worker" || return
@@ -320,9 +320,9 @@ test_callback_no_recursion_on_worker_failure() {
 	async_start_worker() { return 1 }
 	async_stop_worker() { : }
 
-	# Stub prompt_impure_async_tasks to detect if it gets called.
+	# Stub prompt_impure_vcs_tasks to detect if it gets called.
 	local tasks_called=0
-	prompt_impure_async_tasks() { tasks_called=1 }
+	prompt_impure_vcs_tasks() { tasks_called=1 }
 
 	typeset -g prompt_impure_async_inited=0
 
@@ -331,9 +331,9 @@ test_callback_no_recursion_on_worker_failure() {
 	prompt_impure_async_callback '[async]' 3 '' 0 'worker crashed' 0
 
 	assert_equal 0 $prompt_impure_async_inited "prompt_impure_async_inited should remain 0 after failed recovery" || return
-	assert_equal 0 $tasks_called "prompt_impure_async_tasks should not be called when recovery fails" || return
+	assert_equal 0 $tasks_called "prompt_impure_vcs_tasks should not be called when recovery fails" || return
 
-	unfunction async_start_worker async_stop_worker prompt_impure_async_tasks
+	unfunction async_start_worker async_stop_worker prompt_impure_vcs_tasks
 }
 
 test_callback_failed_recovery_clears_git_state() {
@@ -381,29 +381,27 @@ test_callback_recovery_calls_tasks_on_success() {
 	async_register_callback() { : }
 	async_worker_eval() { : }
 
-	# Stub the task functions to detect if they get called.
-	local tasks_called=0 jj_tasks_called=0
-	prompt_impure_async_tasks() { tasks_called=1 }
-	prompt_impure_async_jj_tasks() { jj_tasks_called=1 }
+	# Stub prompt_impure_vcs_tasks to detect if it gets called.
+	local tasks_called=0
+	prompt_impure_vcs_tasks() { tasks_called=1 }
 
 	typeset -g prompt_impure_async_inited=0
 
 	# Simulate the callback receiving an async worker crash (code 2).
 	prompt_impure_async_callback '[async]' 2 '' 0 'worker crashed' 0
 
-	assert_equal 1 $tasks_called "prompt_impure_async_tasks should be called when recovery succeeds" || return
-	assert_equal 1 $jj_tasks_called "prompt_impure_async_jj_tasks should be called when recovery succeeds" || return
+	assert_equal 1 $tasks_called "prompt_impure_vcs_tasks should be called when recovery succeeds" || return
 
-	unfunction async_start_worker async_stop_worker async_register_callback async_worker_eval prompt_impure_async_tasks prompt_impure_async_jj_tasks
+	unfunction async_start_worker async_stop_worker async_register_callback async_worker_eval prompt_impure_vcs_tasks
 }
 
 test_dead_worker_no_stderr_leakage() {
-	# Restore prompt_impure_async_tasks (earlier tests unfunction it).
+	# Restore prompt_impure_async_git_tasks (earlier tests unfunction it).
 	source ./impure.zsh >/dev/null 2>&1
 	prompt_impure_preprompt_render() { : }
 
 	# Simulate: worker was previously started but is now dead.
-	# When recovery fails, the remaining async calls in prompt_impure_async_tasks
+	# When recovery fails, the remaining async calls in prompt_impure_async_git_tasks
 	# must not leak error messages to stderr. (GitHub issue #639)
 	typeset -g prompt_impure_async_inited=1
 
@@ -449,10 +447,10 @@ test_dead_worker_no_stderr_leakage() {
 	}
 
 	local stderr_file=$TMPDIR/pure-test-stderr-$$
-	prompt_impure_async_tasks 2>$stderr_file
+	prompt_impure_async_git_tasks 2>$stderr_file
 	local stderr_output=$(<$stderr_file 2>/dev/null)
 
-	assert_empty "$stderr_output" "prompt_impure_async_tasks must not leak error messages to stderr when worker is dead" || return
+	assert_empty "$stderr_output" "prompt_impure_async_git_tasks must not leak error messages to stderr when worker is dead" || return
 
 	unfunction async_start_worker async_stop_worker async_register_callback async_flush_jobs async_worker_eval async_job
 }

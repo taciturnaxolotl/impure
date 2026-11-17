@@ -119,7 +119,6 @@ test_fingerprint_stable() {
     assert_eq "exec time excluded from fingerprint" "$fp1" "$fp3"
 
     unset prompt_impure_cmd_exec_time
-    psvar[19]=
 }
 
 test_transient_flag() {
@@ -156,12 +155,10 @@ test_transient_flag() {
     assert_not_empty "saved prompt stored" "$prompt_impure_saved_prompt"
 
     # Restore via precmd path
-    PROMPT=$prompt_impure_saved_prompt
-    RPROMPT=$prompt_impure_saved_rprompt
-    unset prompt_impure_saved_prompt prompt_impure_saved_rprompt
-    prompt_impure_build_rprompt
+    prompt_impure_restore_prompt
 
     assert_eq "PROMPT restored after transient" "$saved_prompt" "$PROMPT"
+    assert_eq "RPROMPT restored after transient" "$saved_rprompt" "$RPROMPT"
 }
 
 test_zmx_segment() {
