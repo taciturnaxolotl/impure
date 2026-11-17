@@ -7,12 +7,11 @@ zmodload -F zsh/files b:zf_rm b:zf_mkdir
 main() {
 	test_no_infinite_recursion_on_worker_failure || return
 	test_worker_startup_failure_clears_git_state || return
-	test_worker_sync_clears_stale_git_state_before_returning || return
-	test_worker_sync_cd_failure_is_not_cached || return
-	test_worker_sync_success_queues_git_job || return
-	test_worker_sync_eval_failure_clears_pending_state || return
-	test_worker_sync_records_pending_before_eval || return
-	test_worker_sync_enqueue_failure_preserves_new_pending_state || return
+	test_leaving_working_tree_clears_stale_git_state || return
+	test_worker_sync_is_assumed_and_jobs_queue_immediately || return
+	test_worker_sync_cd_failure_forgets_sync || return
+	test_worker_sync_enqueue_failure_is_not_recorded || return
+	test_jj_result_older_than_latest_request_is_requeued || return
 	test_async_eval_setup_failure_reports_callback || return
 	test_real_worker_sync_reports_encoded_status || return
 	test_callback_no_recursion_on_worker_failure || return
@@ -70,24 +69,17 @@ test_worker_startup_failure_clears_git_state() {
 	unfunction async_start_worker
 }
 
-test_worker_sync_clears_stale_git_state_before_returning() {
+test_leaving_working_tree_clears_stale_git_state() {
 	local saved_pwd=$PWD
 	local tmpdir=$PWD/.ai-temporary/worker-sync-clear-$$
 	zf_mkdir -p "$tmpdir"
 
-	async_worker_eval() {
-		return 0
-	}
-	async_flush_jobs() {
-		return 0
-	}
-	async_job() {
-		return 1
-	}
+	async_worker_eval() { return 0 }
+	async_flush_jobs() { return 0 }
+	async_job() { return 1 }
 
 	typeset -g prompt_impure_async_inited=1
 	typeset -gA prompt_impure_worker_env=(pwd /tmp/repo git_dir __unset__ git_work_tree __unset__)
-	typeset -gA prompt_impure_worker_env_pending=()
 	typeset -gA prompt_impure_vcs_info=(branch main top /tmp/repo action rebase pwd /tmp/repo)
 	typeset -g prompt_impure_git_dirty="*"
 	typeset -g prompt_impure_git_arrows="⇡"
@@ -100,196 +92,149 @@ test_worker_sync_clears_stale_git_state_before_returning() {
 	builtin cd -q "$saved_pwd"
 	zf_rm -rf -- "$saved_pwd/.ai-temporary"
 
-	assert_git_state_empty "before returning for worker sync" || return
+	assert_git_state_empty "after leaving the working tree" || return
 
 	unfunction async_worker_eval async_flush_jobs async_job
 }
 
-test_worker_sync_cd_failure_is_not_cached() {
+test_worker_sync_is_assumed_and_jobs_queue_immediately() {
+	local -a worker_eval_command
+	local flush_calls=0 eval_calls=0
+	local -a queued
+	async_worker_eval() {
+		local worker=$1; shift
+		worker_eval_command=("$@")
+		(( eval_calls++ ))
+		return 0
+	}
+	async_flush_jobs() { (( flush_calls++ )); return 0 }
+	async_job() { queued+=($2); return 0 }
+
+	typeset -g prompt_impure_async_inited=1
+	typeset -gA prompt_impure_worker_env=()
+	typeset -gA prompt_impure_vcs_info=(branch "" top "" action "" pwd "")
+
+	prompt_impure_async_tasks || :
+
+	assert_equal "$PWD" "${prompt_impure_worker_env[pwd]-}" "worker sync should be recorded when sent, not when answered" || return
+	assert_equal 1 $flush_calls "old jobs should be flushed before the worker moves" || return
+	assert_equal prompt_impure_async_worker_sync "${worker_eval_command[1]-}" "worker should be sent the sync eval" || return
+	assert_equal prompt_impure_async_vcs_info "${queued[1]-}" "git jobs should queue right behind the sync" || return
+
+	# A later prompt in the same directory must not flush or resync, and a
+	# reply that never arrives (swallowed by a flush) must not matter.
+	queued=()
+	prompt_impure_async_tasks || :
+
+	assert_equal 1 $flush_calls "an unchanged directory should not flush the worker" || return
+	assert_equal 1 $eval_calls "an unchanged directory should not resync the worker" || return
+	assert_equal prompt_impure_async_vcs_info "${queued[1]-}" "git jobs should keep queueing without a sync reply" || return
+
+	# An unrelated eval reply (renice) changes nothing.
+	prompt_impure_async_callback '[async/eval]' 0 "renice output" 0 "" 0
+	assert_equal "$PWD" "${prompt_impure_worker_env[pwd]-}" "unrelated eval callback should keep the sync" || return
+
+	unfunction async_worker_eval async_flush_jobs async_job
+}
+
+test_worker_sync_cd_failure_forgets_sync() {
 	local saved_pwd=$PWD
 	local tmpdir=$PWD/.ai-temporary/worker-sync-$$
 	zf_mkdir -p "$tmpdir"
 	local -a worker_eval_command
+	local render_called=0
 
 	async_worker_eval() {
 		local worker=$1; shift
 		worker_eval_command=("$@")
 		return 0
 	}
-	local async_flush_jobs_called=0
-	async_flush_jobs() {
-		async_flush_jobs_called=1
-		return 0
-	}
-	local git_job_called=0
-	local render_called=0
-	async_job() {
-		git_job_called=1
-		return 1
-	}
-	prompt_impure_preprompt_render() {
-		render_called=1
-	}
+	async_flush_jobs() { return 0 }
+	async_job() { return 0 }
+	prompt_impure_preprompt_render() { render_called=1 }
 
 	typeset -g prompt_impure_async_inited=1
 	typeset -gA prompt_impure_worker_env=()
-	typeset -gA prompt_impure_worker_env_pending=()
 
 	builtin cd -q "$tmpdir"
 	zf_rm -rf -- "$tmpdir"
 
 	prompt_impure_async_tasks || :
 
-	builtin cd -q "$saved_pwd"
-	zf_rm -rf -- "$saved_pwd/.ai-temporary"
-
-	assert_empty "${prompt_impure_worker_env[pwd]-}" "worker sync should not be cached before eval callback" || return
-	assert_equal 1 $async_flush_jobs_called "old git jobs should be flushed before worker sync" || return
-	assert_equal 0 $git_job_called "git jobs should wait for worker sync callback" || return
-
 	local sync_output
 	sync_output=$("${(@)worker_eval_command}" 2>&1)
 	builtin cd -q "$saved_pwd"
+	zf_rm -rf -- "$saved_pwd/.ai-temporary"
+
+	# A failure for a superseded sync is ignored.
+	typeset -g prompt_impure_jj_bookmark=main
+	(( prompt_impure_worker_sync_token++ ))
+	typeset -gA prompt_impure_worker_env=(pwd "$PWD" git_dir __unset__ git_work_tree __unset__)
+	prompt_impure_async_callback '[async/eval]' 0 "$sync_output" 0 "" 0
+	assert_equal "$PWD" "${prompt_impure_worker_env[pwd]-}" "an old sync failure should not undo a newer sync" || return
+	assert_equal main "$prompt_impure_jj_bookmark" "an old sync failure should not clear jj state" || return
+	(( prompt_impure_worker_sync_token-- ))
+
 	prompt_impure_async_callback '[async/eval]' 0 "$sync_output" 0 "" 1
 
-	assert_empty "${prompt_impure_worker_env[pwd]-}" "failed worker cd should not be cached as synced" || return
-	assert_equal 0 $git_job_called "git jobs should not run when worker cd fails" || return
-	assert_equal 1 $render_called "failed worker sync should render even when stale results are pending" || return
+	assert_empty "${prompt_impure_worker_env[pwd]-}" "failed worker cd should be forgotten so the next prompt retries" || return
+	assert_empty "$prompt_impure_jj_bookmark" "failed worker cd should clear jj state" || return
+	assert_equal 1 $render_called "failed worker sync should render even when results are pending" || return
 
 	prompt_impure_async_callback prompt_impure_async_vcs_info 0 "pwd ${(q)PWD} branch stale top /tmp/repo action rebase" 0 "" 0
 
 	assert_empty "${prompt_impure_vcs_info[branch]-}" "stale vcs info should not repopulate branch after failed worker sync" || return
 	assert_empty "${prompt_impure_vcs_info[top]-}" "stale vcs info should not repopulate top-level after failed worker sync" || return
 
-	prompt_impure_preprompt_render() {
-		:
-	}
+	prompt_impure_preprompt_render() { : }
 	unfunction async_worker_eval async_flush_jobs async_job
 }
 
-test_worker_sync_success_queues_git_job() {
-	local -a worker_eval_command
-
-	async_worker_eval() {
-		local worker=$1; shift
-		worker_eval_command=("$@")
-		return 0
-	}
-	local async_flush_jobs_called=0
-	async_flush_jobs() {
-		async_flush_jobs_called=1
-		return 0
-	}
-	local git_job_called=0
-	async_job() {
-		git_job_called=1
-		return 0
-	}
+test_worker_sync_enqueue_failure_is_not_recorded() {
+	async_worker_eval() { return 1 }
+	async_flush_jobs() { return 0 }
+	local job_called=0
+	async_job() { job_called=1; return 0 }
 
 	typeset -g prompt_impure_async_inited=1
 	typeset -gA prompt_impure_worker_env=()
-	typeset -gA prompt_impure_worker_env_pending=()
-	typeset -gA prompt_impure_vcs_info=(branch "" top "" action "" pwd "")
+	typeset -gA prompt_impure_vcs_info=(branch main top /tmp/repo action "" pwd /tmp/repo)
 
 	prompt_impure_async_tasks || :
 
-	assert_empty "${prompt_impure_worker_env[pwd]-}" "worker sync should not be cached before eval callback" || return
-	assert_equal 1 $async_flush_jobs_called "old git jobs should be flushed before worker sync" || return
-	assert_equal 0 $git_job_called "git jobs should wait for worker sync callback" || return
-
-	prompt_impure_async_callback '[async/eval]' 0 "renice output" 0 "" 0
-
-	assert_empty "${prompt_impure_worker_env[pwd]-}" "unrelated eval callback should not cache worker sync" || return
-	assert_equal 0 $git_job_called "unrelated eval callback should not queue git jobs" || return
-
-	local sync_output
-	sync_output=$("${(@)worker_eval_command}" 2>&1)
-	prompt_impure_async_callback '[async/eval]' 0 "$sync_output" 0 "" 0
-
-	assert_equal "$PWD" "${prompt_impure_worker_env[pwd]-}" "successful worker sync should be cached" || return
-	assert_equal 1 $git_job_called "git jobs should run after worker sync succeeds" || return
+	assert_empty "${prompt_impure_worker_env[pwd]-}" "a sync that never reached the worker should not be recorded" || return
+	assert_equal 0 $job_called "no git job should run in an unsynced worker" || return
+	assert_git_state_empty "when the worker sync cannot be sent" || return
 
 	unfunction async_worker_eval async_flush_jobs async_job
 }
 
-test_worker_sync_eval_failure_clears_pending_state() {
-	local async_worker_eval_called=0
-	async_worker_eval() {
-		(( async_worker_eval_called++ ))
-		(( async_worker_eval_called == 1 ))
-	}
-	async_flush_jobs() {
-		return 0
-	}
-	async_job() {
-		return 0
-	}
+test_jj_result_older_than_latest_request_is_requeued() {
+	local -a queued
+	async_job() { queued+=("$2 $3"); return 0 }
 
-	typeset -g prompt_impure_async_inited=1
-	typeset -gA prompt_impure_worker_env=()
-	typeset -gA prompt_impure_worker_env_pending=()
+	typeset -gA prompt_impure_worker_env=(pwd "$PWD" git_dir __unset__ git_work_tree __unset__)
+	typeset -g prompt_impure_jj_generation=5
+	typeset -g prompt_impure_jj_bookmark=old prompt_impure_jj_changeid=aa
 
-	prompt_impure_async_tasks || :
+	prompt_impure_async_callback prompt_impure_async_jj_status 0 $'4\nnew|bb|0' 0 "" 0
 
-	assert_equal "$PWD" "${prompt_impure_worker_env_pending[pwd]-}" "worker sync should be pending before eval failure" || return
+	assert_equal old "$prompt_impure_jj_bookmark" "a result from a dropped-over request should not render" || return
+	assert_equal "prompt_impure_async_jj_status 5" "${queued[1]-}" "a stale jj result should requeue the latest generation" || return
 
-	prompt_impure_async_callback '[async/eval]' 1 "" 0 "" 0
+	queued=()
+	prompt_impure_async_callback prompt_impure_async_jj_status 0 $'5\nnew|bb|2 ~3' 0 "" 0
 
-	assert_equal 1 $async_worker_eval_called "non-marker eval failure should not immediately retry worker sync" || return
-	assert_empty "${prompt_impure_worker_env_pending[pwd]-}" "non-marker eval failure should clear pending sync state" || return
+	assert_equal 0 ${#queued} "a current jj result should not requeue" || return
+	assert_equal new "$prompt_impure_jj_bookmark" "current jj result should set bookmark" || return
+	assert_equal bb "$prompt_impure_jj_changeid" "current jj result should set change id" || return
+	assert_equal "!2" "$prompt_impure_jj_conflicted" "current jj result should set conflicts" || return
+	assert_equal "~3" "$prompt_impure_jj_working" "current jj result should set working copy count" || return
 
-	unfunction async_worker_eval async_flush_jobs async_job
-}
+	prompt_impure_async_callback prompt_impure_async_jj_status 1 '5' 0 "" 0
+	assert_empty "$prompt_impure_jj_changeid" "leaving a jj repo should clear the change id" || return
 
-test_worker_sync_records_pending_before_eval() {
-	async_worker_eval() {
-		prompt_impure_async_callback '[async/eval]' 0 "prompt_impure_worker_sync:${prompt_impure_worker_env_pending[token]}:0" 0 "" 0
-		return 0
-	}
-	async_flush_jobs() {
-		return 0
-	}
-	local git_job_called=0
-	async_job() {
-		git_job_called=1
-		return 0
-	}
-
-	typeset -g prompt_impure_async_inited=1
-	typeset -gA prompt_impure_worker_env=()
-	typeset -gA prompt_impure_worker_env_pending=()
-	typeset -gA prompt_impure_vcs_info=(branch "" top "" action "" pwd "")
-
-	prompt_impure_async_tasks || :
-
-	assert_empty "${prompt_impure_worker_env_pending[pwd]-}" "sync callback should not leave pending state behind" || return
-	assert_equal "$PWD" "${prompt_impure_worker_env[pwd]-}" "sync callback should cache worker sync even if it arrives during async_worker_eval" || return
-	assert_equal 1 $git_job_called "git jobs should run after immediate worker sync callback" || return
-
-	unfunction async_worker_eval async_flush_jobs async_job
-}
-
-test_worker_sync_enqueue_failure_preserves_new_pending_state() {
-	async_worker_eval() {
-		typeset -gA prompt_impure_worker_env_pending=(pwd "$PWD" git_dir __unset__ git_work_tree __unset__ token 999)
-		return 1
-	}
-	async_flush_jobs() {
-		return 0
-	}
-	async_job() {
-		return 0
-	}
-
-	typeset -g prompt_impure_async_inited=1
-	typeset -gA prompt_impure_worker_env=()
-	typeset -gA prompt_impure_worker_env_pending=()
-
-	prompt_impure_async_tasks || :
-
-	assert_equal 999 "${prompt_impure_worker_env_pending[token]-}" "enqueue failure should not clear newer pending sync state" || return
-
-	unfunction async_worker_eval async_flush_jobs async_job
+	unfunction async_job
 }
 
 test_async_eval_setup_failure_reports_callback() {
@@ -436,9 +381,10 @@ test_callback_recovery_calls_tasks_on_success() {
 	async_register_callback() { : }
 	async_worker_eval() { : }
 
-	# Stub prompt_impure_async_tasks to detect if it gets called.
-	local tasks_called=0
+	# Stub the task functions to detect if they get called.
+	local tasks_called=0 jj_tasks_called=0
 	prompt_impure_async_tasks() { tasks_called=1 }
+	prompt_impure_async_jj_tasks() { jj_tasks_called=1 }
 
 	typeset -g prompt_impure_async_inited=0
 
@@ -446,8 +392,9 @@ test_callback_recovery_calls_tasks_on_success() {
 	prompt_impure_async_callback '[async]' 2 '' 0 'worker crashed' 0
 
 	assert_equal 1 $tasks_called "prompt_impure_async_tasks should be called when recovery succeeds" || return
+	assert_equal 1 $jj_tasks_called "prompt_impure_async_jj_tasks should be called when recovery succeeds" || return
 
-	unfunction async_start_worker async_stop_worker async_register_callback async_worker_eval prompt_impure_async_tasks
+	unfunction async_start_worker async_stop_worker async_register_callback async_worker_eval prompt_impure_async_tasks prompt_impure_async_jj_tasks
 }
 
 test_dead_worker_no_stderr_leakage() {

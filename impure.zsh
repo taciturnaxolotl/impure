@@ -287,11 +287,7 @@ prompt_impure_precmd() {
 	fi
 
 	# Perform async Jujutsu status check, then the Git dirty check and fetch.
-	# jj goes first because it flushes the worker on a directory change, and
-	# `async_flush_jobs` drains the zpty buffer. Flushing after Git has queued
-	# its worker-env sync can swallow the reply, leaving
-	# `prompt_impure_worker_env_pending` set forever and wedging Git status for
-	# the rest of the session.
+	# Whichever runs first moves the worker into $PWD for both.
 	prompt_impure_async_jj_tasks
 	prompt_impure_async_tasks
 
@@ -531,6 +527,9 @@ prompt_impure_in_jj_repo() {
 prompt_impure_async_jj_status() {
 	setopt localoptions noshwordsplit
 
+	# Echo the request generation so the callback can spot a stale result.
+	print -r -- "${1:-0}"
+
 	# Skip unless inside a jj repo.
 	prompt_impure_in_jj_repo || return 1
 
@@ -585,8 +584,6 @@ prompt_impure_async_worker_sync() {
 
 prompt_impure_clear_git_state() {
 	unset prompt_impure_git_dirty prompt_impure_git_staging prompt_impure_git_arrows prompt_impure_git_fetch_pattern prompt_impure_git_last_fetch_timestamp prompt_impure_git_detached prompt_impure_git_conflicted
-	typeset -gA prompt_impure_worker_env=()
-	typeset -gA prompt_impure_worker_env_pending=()
 	typeset -gA prompt_impure_vcs_info
 	prompt_impure_vcs_info[branch]=
 	prompt_impure_vcs_info[top]=
@@ -690,6 +687,8 @@ prompt_impure_async_init() {
 		return
 	fi
 	prompt_impure_async_inited=1
+	# A fresh worker is not in $PWD yet.
+	typeset -gA prompt_impure_worker_env=()
 	# Initialize zsh-async library (deferred from setup for faster startup).
 	async
 	if ! async_start_worker "prompt_impure" -u -n 2>/dev/null; then
@@ -700,6 +699,35 @@ prompt_impure_async_init() {
 	fi
 	async_register_callback "prompt_impure" prompt_impure_async_callback
 	async_worker_eval "prompt_impure" prompt_impure_async_renice
+}
+
+# Start the worker and move it into $PWD; requests run in order, so the reply
+# is never awaited (a flush could swallow it) and only a failure is acted on.
+prompt_impure_async_ready() {
+	setopt localoptions noshwordsplit
+
+	prompt_impure_async_init || return
+
+	typeset -gA prompt_impure_worker_env
+	local cur_git_dir=${GIT_DIR-__unset__}
+	local cur_git_work_tree=${GIT_WORK_TREE-__unset__}
+	if [[ $PWD == ${prompt_impure_worker_env[pwd]-} &&
+		$cur_git_dir == ${prompt_impure_worker_env[git_dir]-} &&
+		$cur_git_work_tree == ${prompt_impure_worker_env[git_work_tree]-} ]]; then
+		return 0
+	fi
+
+	# Jobs still running belong to the old directory.
+	async_flush_jobs "prompt_impure"
+
+	typeset -gi prompt_impure_worker_sync_token
+	(( prompt_impure_worker_sync_token++ ))
+	if ! async_worker_eval "prompt_impure" \
+		prompt_impure_async_worker_sync $prompt_impure_worker_sync_token "$PWD" ${+GIT_DIR} "${GIT_DIR-}" ${+GIT_WORK_TREE} "${GIT_WORK_TREE-}"; then
+		typeset -gA prompt_impure_worker_env=()
+		return 1
+	fi
+	typeset -gA prompt_impure_worker_env=(pwd "$PWD" git_dir "$cur_git_dir" git_work_tree "$cur_git_work_tree")
 }
 
 # Stop the async worker on shell exit to prevent the zpty from holding
@@ -730,11 +758,9 @@ prompt_impure_async_tasks() {
 		return
 	fi
 
-	# Check if git integration is enabled (default: yes).
+	# Check if git integration is enabled (default: yes). The callback drops
+	# in-flight Git results; flushing here would kill the jj job every prompt.
 	if ! zstyle -T ":prompt:impure:git" show; then
-		if (( ${prompt_impure_async_inited:-0} )); then
-			async_flush_jobs "prompt_impure"
-		fi
 		prompt_impure_clear_git_state
 		return
 	fi
@@ -753,63 +779,17 @@ prompt_impure_async_tasks() {
 	fi
 
 	# Fallback: use zsh-async with individual git commands.
-	if ! prompt_impure_async_init; then
+	if ! prompt_impure_async_ready; then
 		prompt_impure_clear_git_state
-		return
-	fi
-
-	# Sync working directory and git environment variables to the async worker.
-	# Skip if nothing changed since last sync (common case: running commands in same dir).
-	# Uses an associative array to avoid scalar globals triggering AUTO_NAME_DIRS.
-	typeset -gA prompt_impure_worker_env
-	typeset -gA prompt_impure_worker_env_pending
-	local cur_git_dir=${GIT_DIR-__unset__}
-	local cur_git_work_tree=${GIT_WORK_TREE-__unset__}
-	if [[ $PWD != ${prompt_impure_worker_env[pwd]-} ||
-		$cur_git_dir != ${prompt_impure_worker_env[git_dir]-} ||
-		$cur_git_work_tree != ${prompt_impure_worker_env[git_work_tree]-} ]]; then
-		if (( ${#prompt_impure_worker_env_pending} )); then
-			# A sync normally answers within milliseconds, so one surviving a
-			# whole precmd means its reply was lost — `async_flush_jobs` drains
-			# the zpty buffer and can swallow it. Re-issue on the second sighting
-			# instead of blocking Git status for the rest of the session.
-			if (( ! ${prompt_impure_worker_env_pending[stale]:-0} )); then
-				prompt_impure_worker_env_pending[stale]=1
-				return
-			fi
-		fi
-		prompt_impure_clear_git_state
-		async_flush_jobs "prompt_impure"
-		typeset -gi prompt_impure_worker_sync_token
-		(( prompt_impure_worker_sync_token++ ))
-		local sync_token=$prompt_impure_worker_sync_token
-		prompt_impure_worker_env_pending[pwd]=$PWD
-		prompt_impure_worker_env_pending[git_dir]=$cur_git_dir
-		prompt_impure_worker_env_pending[git_work_tree]=$cur_git_work_tree
-		prompt_impure_worker_env_pending[token]=$sync_token
-		async_worker_eval "prompt_impure" \
-			prompt_impure_async_worker_sync $sync_token "$PWD" ${+GIT_DIR} "${GIT_DIR-}" ${+GIT_WORK_TREE} "${GIT_WORK_TREE-}" || {
-				if [[ ${prompt_impure_worker_env_pending[token]-} == $sync_token ]]; then
-					typeset -gA prompt_impure_worker_env_pending=()
-				fi
-				return
-			}
 		return
 	fi
 
 	typeset -gA prompt_impure_vcs_info
 
+	# Left the working tree (not just descended into it).
 	local -H MATCH MBEGIN MEND
 	if [[ $PWD != ${prompt_impure_vcs_info[pwd]}* ]]; then
-		# Stop any running async jobs.
-		async_flush_jobs "prompt_impure"
-
-		# Reset preprompt variables, switching working tree.
-		unset prompt_impure_git_dirty prompt_impure_git_staging
-		unset prompt_impure_git_arrows
-		unset prompt_impure_git_fetch_pattern
-		prompt_impure_vcs_info[branch]=
-		prompt_impure_vcs_info[top]=
+		prompt_impure_clear_git_state
 	fi
 	unset MATCH MBEGIN MEND
 
@@ -831,39 +811,37 @@ prompt_impure_async_jj_tasks() {
 
 	# Git already skipped if .jj was found, so no need to check vcs_info here.
 
-	# Ensure async worker is initialized.
-	prompt_impure_async_init || return
+	# Start the worker and move it into $PWD before queueing anything.
+	prompt_impure_async_ready || return
 
-	# Clear state and sync worker CWD on directory change.
 	if [[ $PWD != ${prompt_impure_jj_pwd:-} ]]; then
 		typeset -g prompt_impure_jj_pwd=$PWD
 		prompt_impure_clear_jj_state
-		async_flush_jobs "prompt_impure"
-		# Sync the async worker's working directory so jj commands run in the
-		# correct repo. Without this, the worker stays in its previous CWD
-		# and prompt_impure_in_jj_repo fails to find .jj.
-		async_worker_eval "prompt_impure" builtin cd -q ${(q)PWD}
 	fi
 
-	# Always dispatch: jj status can change without cd (e.g. jj commit, jj new).
-	# The async worker handles concurrent job dedup internally.
-	async_job "prompt_impure" prompt_impure_async_jj_status
+	# Always dispatch: jj status can change without cd (e.g. jj new). The unique
+	# worker drops this if a jj job is running, so the callback retries old ones.
+	typeset -gi prompt_impure_jj_generation
+	(( prompt_impure_jj_generation++ ))
+	async_job "prompt_impure" prompt_impure_async_jj_status $prompt_impure_jj_generation
 }
 
 # When gitstatusd handles status synchronously, we still need the async
 # worker for git fetch (gitstatusd doesn't do network operations).
 prompt_impure_async_fetch_only() {
-	if ! prompt_impure_async_init; then
+	if ! prompt_impure_async_ready; then
 		return
 	fi
 
-	# Throttle: skip fetch if last one was recent.
+	# Throttle: skip fetch if the last one was recent and in this repo.
 	local -i interval=${IMPURE_GIT_FETCH_INTERVAL:-60}
 	local -F now=$EPOCHREALTIME
-	if (( now - ${prompt_impure_git_last_fetch_timestamp:-0} < interval )); then
+	if [[ ${prompt_impure_git_last_fetch_top-} == $prompt_impure_vcs_info[top] ]] &&
+		(( now - ${prompt_impure_git_last_fetch_timestamp:-0} < interval )); then
 		return
 	fi
 	typeset -gF prompt_impure_git_last_fetch_timestamp=$now
+	typeset -g prompt_impure_git_last_fetch_top=$prompt_impure_vcs_info[top]
 
 	# Skip fetch if disabled or in home folder.
 	if (( ${IMPURE_GIT_PULL:-1} )) && [[ $prompt_impure_vcs_info[top] != $HOME ]]; then
@@ -931,6 +909,18 @@ prompt_impure_async_callback() {
 	case $job in
 		prompt_impure_async_vcs_info|prompt_impure_async_git_aliases|prompt_impure_async_git_dirty|prompt_impure_async_git_fetch|prompt_impure_async_git_arrows)
 			[[ ${prompt_impure_worker_env[pwd]-} == $PWD ]] || job='[stale]'
+			zstyle -T ":prompt:impure:git" show || job='[stale]'
+			;;
+		prompt_impure_async_jj_status)
+			# The first output line is the generation the job was requested with.
+			local jj_generation=${output%%$'\n'*}
+			output=${${output#$jj_generation}#$'\n'}
+			if [[ ${prompt_impure_worker_env[pwd]-} != $PWD ]]; then
+				job='[stale]'
+			elif [[ $jj_generation != ${prompt_impure_jj_generation-} ]]; then
+				async_job "prompt_impure" prompt_impure_async_jj_status $prompt_impure_jj_generation
+				job='[stale]'
+			fi
 			;;
 	esac
 
@@ -943,10 +933,10 @@ prompt_impure_async_callback() {
 				# Our worker died unexpectedly, try to recover immediately.
 				typeset -g prompt_impure_async_inited=0
 				async_stop_worker prompt_impure
-				typeset -gA prompt_impure_worker_env=()
-				typeset -gA prompt_impure_worker_env_pending=()
 				if prompt_impure_async_init; then
-					prompt_impure_async_tasks  # Restart all tasks.
+					# Restart all tasks.
+					prompt_impure_async_jj_tasks
+					prompt_impure_async_tasks
 				else
 					prompt_impure_clear_git_state
 					do_render=1
@@ -958,32 +948,14 @@ prompt_impure_async_callback() {
 			fi
 			;;
 		\[async/eval])
-			typeset -gA prompt_impure_worker_env_pending
-			local worker_sync_output=${(M)${(f)output}:#prompt_impure_worker_sync:*}
-			local -a worker_sync_result
-			worker_sync_result=("${(@s.:.)worker_sync_output}")
-			if [[ -n $worker_sync_output ]] &&
-				(( ${#prompt_impure_worker_env_pending} )); then
-				[[ $worker_sync_result[2] == ${prompt_impure_worker_env_pending[token]-} ]] || return
-				local worker_sync_status=$worker_sync_result[3]
-				if (( worker_sync_status )); then
-					prompt_impure_clear_git_state
-					do_render=1
-					next_pending=0
-				else
-					typeset -gA prompt_impure_worker_env
-					prompt_impure_worker_env[pwd]=$prompt_impure_worker_env_pending[pwd]
-					prompt_impure_worker_env[git_dir]=$prompt_impure_worker_env_pending[git_dir]
-					prompt_impure_worker_env[git_work_tree]=$prompt_impure_worker_env_pending[git_work_tree]
-					typeset -gA prompt_impure_worker_env_pending=()
-					prompt_impure_async_tasks
-				fi
-			elif (( code )); then
-				# Looks like async_worker_eval failed,
-				# rerun async tasks just in case.
+			# The latest sync failed to enter $PWD, or an eval died before
+			# reporting: forget the sync so the next prompt retries.
+			local worker_sync=${(M)${(f)output}:#prompt_impure_worker_sync:*}
+			if [[ $worker_sync == prompt_impure_worker_sync:${prompt_impure_worker_sync_token-}:1 ]] ||
+				{ [[ -z $worker_sync ]] && (( code )) }; then
 				typeset -gA prompt_impure_worker_env=()
-				typeset -gA prompt_impure_worker_env_pending=()
 				prompt_impure_clear_git_state
+				prompt_impure_clear_jj_state
 				do_render=1
 				next_pending=0
 			fi
