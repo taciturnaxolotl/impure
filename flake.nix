@@ -4,36 +4,13 @@
   outputs =
     { self }:
     let
-      impureSrc = self;
+      version = self.shortRev or self.dirtyShortRev or "dirty";
     in
     {
-      homeModules.default =
-        {
-          config,
-          lib,
-          pkgs,
-          ...
-        }:
-        let
-          cfg = config.programs.impure;
-        in
-        {
-          options.programs.impure = {
-            enable = lib.mkEnableOption "impure zsh prompt";
-            execTimeThreshold = lib.mkOption {
-              type = lib.types.int;
-              default = 3;
-              description = "Minimum seconds before showing execution time.";
-            };
-          };
+      overlays.default = final: _: {
+        impure = final.callPackage ./nix/package.nix { inherit version; };
+      };
 
-          config = lib.mkIf cfg.enable {
-            programs.zsh.initContent = lib.mkBefore ''
-              source ${impureSrc}/async.zsh
-              IMPURE_CMD_MAX_EXEC_TIME=${toString cfg.execTimeThreshold}
-              source ${impureSrc}/impure.zsh
-            '';
-          };
-        };
+      homeModules.default = import ./nix/module.nix { inherit version; };
     };
 }

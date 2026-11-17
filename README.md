@@ -36,7 +36,7 @@ and only needed for jj status.
 
 ### Nix flake
 
-Add impure as a flake input and source it in your home-manager config:
+Add impure as a flake input and import its home-manager module:
 
 ```nix
 # flake.nix
@@ -46,31 +46,25 @@ Add impure as a flake input and source it in your home-manager config:
 ```
 
 ```nix
-# home-manager module
-programs.zsh.initContent = ''
-  source ${inputs.impure}/async.zsh
-  IMPURE_CMD_MAX_EXEC_TIME=3
-  source ${inputs.impure}/impure.zsh
-'';
+# home-manager config
+{
+  imports = [ inputs.impure.homeModules.default ];
+
+  programs.zsh.defaultKeymap = "emacs"; # or viins
+  programs.impure = {
+    enable = true;
+    # instantPrompt = false;
+    variables.CMD_MAX_EXEC_TIME = 5;      # IMPURE_CMD_MAX_EXEC_TIME
+    zstyles."path:separator".dim = true;  # zstyle ':prompt:impure:path:separator' dim yes
+  };
+}
 ```
 
-For instant prompt, source `instant-prompt.zsh` **before** compinit and plugins:
-
-```nix
-programs.zsh.initContent = ''
-  # Instant prompt — must be first
-  source ${inputs.impure}/instant-prompt.zsh
-
-  # Completions and plugins
-  autoload -Uz compinit && compinit -C
-  # ... your plugins ...
-
-  # Impure prompt
-  source ${inputs.impure}/async.zsh
-  IMPURE_CMD_MAX_EXEC_TIME=3
-  source ${inputs.impure}/impure.zsh
-'';
-```
+The module puts the instant prompt ahead of compinit and plugins, and loads the
+prompt after your keymap and plugins. `variables` and `zstyles` take anything
+listed under [Configuration](#configuration); booleans become `1`/`0` and
+`yes`/`no`. `overlays.default` provides `pkgs.impure` if you'd rather source
+the files yourself.
 
 ### Manual
 
