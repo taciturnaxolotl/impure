@@ -12,6 +12,7 @@ main() {
 	test_worker_sync_cd_failure_forgets_sync || return
 	test_worker_sync_enqueue_failure_is_not_recorded || return
 	test_jj_result_older_than_latest_request_is_requeued || return
+	test_fetch_result_recounts_arrows || return
 	test_async_eval_setup_failure_reports_callback || return
 	test_real_worker_sync_reports_encoded_status || return
 	test_callback_no_recursion_on_worker_failure || return
@@ -235,6 +236,32 @@ test_jj_result_older_than_latest_request_is_requeued() {
 	assert_empty "$prompt_impure_jj_changeid" "leaving a jj repo should clear the change id" || return
 
 	unfunction async_job
+}
+
+test_fetch_result_recounts_arrows() {
+	local queried=0
+	local -a queued
+	prompt_impure_gitstatus_query() { queried=1 }
+	async_job() { queued+=($2) }
+
+	typeset -gA prompt_impure_worker_env=(pwd "$PWD" git_dir __unset__ git_work_tree __unset__)
+	typeset -g prompt_impure_async_inited=1 prompt_impure_gitstatus_inited=1
+	prompt_impure_async_callback prompt_impure_async_git_fetch 0 '' 0 '' 0
+	assert_equal 1 $queried "a finished fetch should requery gitstatusd" || return
+	assert_equal 0 ${#queued} "gitstatusd should not need an arrows job" || return
+
+	typeset -g prompt_impure_gitstatus_inited=0
+	prompt_impure_async_callback prompt_impure_async_git_fetch 1 '' 0 '' 0
+	assert_equal prompt_impure_async_git_arrows "${queued[1]-}" "without gitstatusd a finished fetch should queue a recount" || return
+
+	typeset -g prompt_impure_git_arrows=
+	prompt_impure_async_callback prompt_impure_async_git_arrows 0 $'2\t1' 0 '' 0
+	assert_equal "⇡2 ⇣1" "$prompt_impure_git_arrows" "arrows result should set the counts" || return
+	prompt_impure_async_callback prompt_impure_async_git_arrows 128 '' 0 '' 0
+	assert_empty "$prompt_impure_git_arrows" "no upstream should clear the arrows" || return
+
+	unfunction prompt_impure_gitstatus_query async_job
+	source ./vcs.zsh
 }
 
 test_async_eval_setup_failure_reports_callback() {

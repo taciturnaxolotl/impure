@@ -106,11 +106,8 @@ prompt_impure_async_git_fetch() {
 		ref=$(command git symbolic-ref -q HEAD)
 		remote=($(command git for-each-ref --format='%(upstream:remotename) %(refname)' $ref))
 		# No upstream for this branch.
-		[[ -n $remote[1] ]] || return 97
+		[[ -n $remote[1] ]] || return
 	fi
-
-	# 99: fetch failed, 98: fetch tried to prompt for a password.
-	local fail_code=99
 
 	# In MONITOR mode a fetch that prompts gets suspended, which we can detect
 	# and kill; a prompting child would otherwise corrupt the worker.
@@ -119,19 +116,13 @@ prompt_impure_async_git_fetch() {
 	trap - HUP
 	trap '
 		trap - CHLD
-		if [[ $jobstates = suspended* ]]; then
-			fail_code=98
-			kill %%
-		fi
+		[[ $jobstates = suspended* ]] && kill %%
 	' CHLD
 
 	command git -c gc.auto=0 -c fetch.prune=false fetch \
 		--quiet --no-tags --no-prune-tags --recurse-submodules=no \
 		$remote &>/dev/null &
-	wait $! || return $fail_code
-
-	unsetopt monitor
-	prompt_impure_async_git_arrows
+	wait $!
 }
 
 prompt_impure_async_git_arrows() {
@@ -483,14 +474,17 @@ prompt_impure_async_callback() {
 				do_render=1
 			fi
 			;;
-		prompt_impure_async_git_fetch|prompt_impure_async_git_arrows)
+		prompt_impure_async_git_fetch)
+			# Recount now rather than in the job, whose answer could predate a push.
+			if (( prompt_impure_gitstatus_inited )); then
+				prompt_impure_gitstatus_query && do_render=1
+			else
+				async_job "prompt_impure" prompt_impure_async_git_arrows
+			fi
+			;;
+		prompt_impure_async_git_arrows)
 			local REPLY=
-			case $code in
-				0) prompt_impure_format_arrows ${(ps:\t:)output} ;;
-				# Fetch failed or wanted a password: keep what we had.
-				98|99) REPLY=${prompt_impure_git_arrows-} ;;
-				# 97 or rev-list failing: no upstream.
-			esac
+			(( code )) || prompt_impure_format_arrows ${(ps:\t:)output}
 			if [[ $REPLY != ${prompt_impure_git_arrows-} ]]; then
 				typeset -g prompt_impure_git_arrows=$REPLY
 				do_render=1
